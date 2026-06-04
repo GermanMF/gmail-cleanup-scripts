@@ -45,6 +45,9 @@ build/
 *.log
 logs/
 
+# Local workspace metadata (not committed to git)
+tasks/
+
 # Temporary files
 *.tmp
 *.bak
