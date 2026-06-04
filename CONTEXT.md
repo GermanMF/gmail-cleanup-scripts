@@ -1,0 +1,152 @@
+# 🗺️ Project Context — Gmail Cleanup Scripts
+
+> **Read this first.** Persistent AI and contributor context for the `gmail-cleanup-scripts` repository.
+> Keep this file updated whenever the architecture, scope, or major decisions change.
+> Last updated: 2026-06-03
+
+---
+
+## 📌 What this project does
+
+A **Google Apps Script** suite that keeps a Gmail inbox clean by:
+1. **Archiving** email attachments to Google Drive in a structured folder hierarchy.
+2. **Trashing** old emails from Gmail once their attachments are safely stored.
+3. **Reporting** the current mailbox state (stats, top senders, Drive inventory).
+
+---
+
+## 🗂️ Repository Layout
+
+```
+gmail-cleanup-scripts/
+├── cleanup-attachments.gs   ← ONLY deployable script (paste into GAS editor or push via clasp)
+├── jsconfig.json            ← VS Code type-checking; ES2015 + google-apps-script types
+├── .gitignore               ← excludes node_modules, .clasp.json (contains OAuth tokens!)
+├── CONTEXT.md               ← This file
+├── README.md                ← User-facing setup guide & config reference
+├── tasks/
+│   ├── todo.md              ← Active backlog (High / Medium / Low / Done)
+│   └── lessons.md           ← Append-only session lessons log
+└── node_modules/            ← Editor tooling ONLY — never deployed to GAS
+```
+
+**Deployment model**: No build step. `cleanup-attachments.gs` is a single flat file. Copy-paste into the [Google Apps Script editor](https://script.google.com) or push via `clasp` (not yet wired — see backlog).
+
+---
+
+## ⚙️ CONFIG Object (top of `cleanup-attachments.gs`)
+
+| Key | Default | Purpose |
+|---|---|---|
+| `SEARCH_QUERY` | `'has:attachment -in:chats'` | Base Gmail search query |
+| `PROCESSED_LABEL` | `'Processed_Drive'` | Label applied after archiving (dedup guard) |
+| `BASE_FOLDER_NAME` | `'Gmail_Attachments_Archive'` | Root folder in user's My Drive |
+| `MIN_FILE_SIZE_BYTES` | `10240` (10 KB) | Skip inline signature images |
+| `BATCH_SIZE` | `50` | Threads per execution (6-min wall-clock safety valve) |
+| `ARCHIVE_AFTER_MONTHS` | `3` | Emails older than this are eligible to archive |
+| `DELETE_AFTER_MONTHS` | `6` | Emails older than this are also trashed after archiving |
+| `MAX_COUNT_PER_QUERY` | `500` | Safety cap for `countThreads` pagination |
+
+---
+
+## 🪟 Date-Window Policy
+
+```
+NOW
+ │
+ ├── < 3 months old    → ✅  UNTOUCHED — skipped entirely
+ ├── 3–6 months old   → 📁  Archive attachments to Drive + apply Processed_Drive label
+ └── > 6 months old   → 📁  Archive attachments to Drive + moveToTrash()
+```
+
+Decision is based on the **newest message date** in each thread.
+
+---
+
+## 📁 Drive Folder Hierarchy
+
+```
+Gmail_Attachments_Archive/
+└── Display Name/
+    └── email@domain.com/
+        └── YYYY/
+            └── YYYYMMDD_localpart_OriginalFilename.ext
+```
+
+---
+
+## 🔧 Function Map
+
+### Entry Points
+
+| Function | Safe? | Description |
+|---|---|---|
+| `processGmailAttachments()` | ⚠️ Destructive | Main loop — archive + label/trash. Prints pre/post reports. |
+| `generateCleanupReport(title?)` | ✅ Read-only | Stats snapshot to Logger. Run anytime. |
+| `migrateOldStructure()` | ⚠️ One-time | Stage 1: old `YYYY/MM_Month/` → `email@domain/YYYY/` |
+| `migrateEmailFoldersToDisplayName()` | ⚠️ One-time | Stage 2: `email@domain/` → `DisplayName/email/` |
+
+### Key Helpers
+
+| Function | Notes |
+|---|---|
+| `countThreads(query, max?)` | Paginates at 500; caps at `MAX_COUNT_PER_QUERY` |
+| `getTopSenders(query, topN)` | Samples first 500 threads only (speed tradeoff) |
+| `getDriveArchiveStats()` | Walks Drive tree 3 levels deep |
+| `processThread → processMessage → saveAttachment` | Archival pipeline |
+| `getOrCreateLabel / getOrCreateFolder` | Idempotent — safe to call repeatedly |
+| `sanitizeFilename` | Replaces `/ \ : * ? " < > |` and spaces with `_` |
+| `computeThresholdDate(months)` | ⚠️ UTC-sensitive — see Gotchas |
+
+---
+
+## ⚠️ Gotchas
+
+1. **6-minute wall-clock limit** — keep `BATCH_SIZE` at 50 unless you've profiled a safe increase.
+2. **`GmailApp.search` max page = 500** — `countThreads` paginates; direct callers silently miss overflow.
+3. **`computeThresholdDate` is UTC** — GAS runs in UTC, not the user's local timezone. Midnight UTC runs may cross date boundaries unexpectedly.
+4. **`addFile`/`removeFile` is a reference move** — not a copy. Mid-migration failure can leave a file with two parents temporarily.
+5. **Logger is ephemeral** — output disappears after execution. For audits, write to a Sheet or send via `MailApp`.
+6. **`.clasp.json` contains OAuth tokens** — already in `.gitignore`, but double-check before every commit.
+7. **No dedup on `saveAttachment`** — the `Processed_Drive` label is the only guard. If the label is removed, files can be re-saved.
+
+---
+
+## 📋 Backlog Snapshot
+
+> Always check `tasks/todo.md` for the authoritative, up-to-date list.
+
+### 🔴 High
+- [ ] `clasp` CLI integration
+- [ ] Unit-testable utility layer (`utils.gs` + Jest stubs)
+
+### 🟡 Medium
+- [ ] Email notification on batch completion (`MailApp`)
+- [ ] Dry-run mode (`DRY_RUN` config flag)
+- [ ] Attachment deduplication before `createFile`
+- [ ] Configurable sender exclusion list
+
+### 🟢 Low
+- [ ] HTML email report
+- [ ] Spreadsheet dashboard (historical stats)
+- [ ] Multi-account support investigation
+
+---
+
+## 🔭 Future Suite Modules
+
+`cleanup-attachments.gs` is **Module 1**. Planned future modules:
+- `cleanup-newsletters.gs`
+- `cleanup-promotions.gs`
+- `cleanup-large-emails.gs`
+- `utils.gs` — shared utilities across all modules
+- `appsscript.json` — GAS project manifest
+
+---
+
+## 🏁 Session Wrap-Up Checklist
+
+1. Update `tasks/todo.md` — mark done items `[x]`, add new ones.
+2. Append a new entry to `tasks/lessons.md`.
+3. Update `CONTEXT.md` if architecture or scope changed.
+4. Commit to `dev`; merge to `main` only when stable.
