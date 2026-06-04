@@ -4,11 +4,11 @@
     "lib": [
       "ES2015"
     ],
+    "allowJs": true,
     "checkJs": false
   },
-  "include": [
-    "**/*.js",
-    "**/*.gs"
+  "files": [
+    "cleanup-attachments.gs"
   ],
   "exclude": [
     "node_modules"
