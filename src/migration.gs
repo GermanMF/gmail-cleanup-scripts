@@ -290,6 +290,7 @@ function migrateFileToCategory(file, baseFolder) {
  * it encounters and trashes subsequent ones with the same name in the same folder.
  */
 function cleanUpAllDuplicates() {
+  const startTime = Date.now();
   try {
     const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
     const categoryFolders = baseFolder.getFolders();
@@ -305,8 +306,14 @@ function cleanUpAllDuplicates() {
 
         while (yearFolders.hasNext()) {
           const yearFolder = yearFolders.next();
-          const trashedInFolder = removeDuplicatesInFolder(yearFolder);
+          const trashedInFolder = removeDuplicatesInFolder(yearFolder, startTime);
           totalTrashed += trashedInFolder;
+          
+          if (Date.now() - startTime > 4.5 * 60 * 1000) {
+            Logger.log(`Duplicate cleanup paused due to time limit. Run again to continue.`);
+            Logger.log(`Total files trashed in this run: ${totalTrashed}`);
+            return;
+          }
         }
       }
     }
@@ -322,18 +329,16 @@ function cleanUpAllDuplicates() {
  * @param {GoogleAppsScript.Drive.Folder} folder 
  * @returns {number} Number of files trashed.
  */
-function removeDuplicatesInFolder(folder) {
+function removeDuplicatesInFolder(folder, startTime) {
   let trashedCount = 0;
   try {
-    const files = folder.getFiles();
+    const files = folder.searchFiles('trashed = false');
     const seenNames = new Set();
 
     const toTrash = [];
 
     while (files.hasNext()) {
       const file = files.next();
-      if (file.isTrashed()) continue;
-
       const name = file.getName();
 
       if (seenNames.has(name)) {
@@ -344,7 +349,11 @@ function removeDuplicatesInFolder(folder) {
     }
 
     for (let i = 0; i < toTrash.length; i++) {
-      Logger.log(`    Trashing duplicate: ${toTrash[i].getName()} (Folder: ${folder.getName()})`);
+      if (Date.now() - startTime > 4.5 * 60 * 1000) {
+        Logger.log(`    Timeout approaching! Stopping early in folder: ${folder.getName()}`);
+        break;
+      }
+      Logger.log(`    Trashing duplicate: ${toTrash[i].getName()} (ID: ${toTrash[i].getId()})`);
       toTrash[i].setTrashed(true);
       trashedCount++;
     }
