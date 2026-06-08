@@ -155,6 +155,80 @@ function parseOldFilename(filename) {
 }
 
 // =============================================================================
+// INTELLIGENT FILTERING UTILITIES
+// =============================================================================
+
+/**
+ * Uses the SENDER_ALIASES configuration to find a friendly sender name.
+ * If no alias matches, it falls back to the provided display name, or the domain name, or local part.
+ * @param {string} email Sender's email address.
+ * @param {string} displayName Extracted display name.
+ * @returns {string} Friendly sender name.
+ */
+function getFriendlySenderName(email, displayName) {
+  if (typeof CONFIG !== 'undefined' && CONFIG.SENDER_ALIASES) {
+    const lowerEmail = email.toLowerCase();
+    
+    // Check exact email match
+    if (CONFIG.SENDER_ALIASES[lowerEmail]) {
+      return CONFIG.SENDER_ALIASES[lowerEmail];
+    }
+    
+    // Check domain match
+    const atIndex = lowerEmail.indexOf('@');
+    if (atIndex !== -1) {
+      const domain = lowerEmail.substring(atIndex);
+      if (CONFIG.SENDER_ALIASES[domain]) {
+        return CONFIG.SENDER_ALIASES[domain];
+      }
+    }
+  }
+  
+  // If no alias, use display name if it's not the email local part itself or empty
+  if (displayName && displayName !== extractLocalPart(email)) {
+    return displayName;
+  }
+  
+  // As a last resort, try to extract a capitalized domain name or use local part
+  const atIndex = email.indexOf('@');
+  if (atIndex !== -1) {
+    const domainPart = email.substring(atIndex + 1);
+    const domainName = domainPart.split('.')[0];
+    if (domainName && domainName.length > 2) {
+      return domainName.charAt(0).toUpperCase() + domainName.slice(1);
+    }
+  }
+  
+  return extractLocalPart(email);
+}
+
+/**
+ * Determines the category of an email based on CONFIG.CATEGORIES rules.
+ * @param {string} subject Email subject.
+ * @param {string} senderEmail Sender's email address.
+ * @param {string} filename Attachment filename.
+ * @returns {string} The determined category.
+ */
+function determineCategory(subject, senderEmail, filename) {
+  if (typeof CONFIG === 'undefined' || !CONFIG.CATEGORIES) {
+    return 'Otros';
+  }
+  
+  const searchString = `${subject} ${senderEmail} ${filename}`.toLowerCase();
+  
+  for (let i = 0; i < CONFIG.CATEGORIES.length; i++) {
+    const category = CONFIG.CATEGORIES[i];
+    for (let j = 0; j < category.keywords.length; j++) {
+      if (searchString.indexOf(category.keywords[j].toLowerCase()) !== -1) {
+        return category.name;
+      }
+    }
+  }
+  
+  return CONFIG.DEFAULT_CATEGORY || 'Otros';
+}
+
+// =============================================================================
 // NODE.JS / JEST EXPORT
 // This block is ignored by Google Apps Script (which has no `module` global).
 // It allows Jest to import and unit-test these functions directly.
@@ -171,5 +245,7 @@ if (typeof module !== 'undefined') {
     formatDateForQuery,
     computeThresholdDate,
     parseOldFilename,
+    getFriendlySenderName,
+    determineCategory,
   };
 }

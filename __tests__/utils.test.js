@@ -20,7 +20,9 @@ const {
   formatDateForQuery,
   computeThresholdDate,
   parseOldFilename,
-} = require('../utils.gs');
+  getFriendlySenderName,
+  determineCategory,
+} = require('../src/utils.gs');
 
 // =============================================================================
 // sanitizeFilename
@@ -302,5 +304,77 @@ describe('parseOldFilename', () => {
     expect(result.dateStr).toBe('20230315');
     expect(result.senderEmail).toBe('noreply@amazon.com');
     expect(result.restOfName).toBe('Invoice_2023-03-15.pdf');
+  });
+});
+
+
+// =============================================================================
+// getFriendlySenderName
+// =============================================================================
+
+describe('getFriendlySenderName', () => {
+  beforeAll(() => {
+    global.CONFIG = {
+      SENDER_ALIASES: {
+        '@uber.com': 'Uber',
+        'no-reply@amazon.com': 'Amazon',
+      }
+    };
+  });
+  
+  afterAll(() => {
+    delete global.CONFIG;
+  });
+
+  test('returns alias for domain match', () => {
+    expect(getFriendlySenderName('receipts@uber.com', 'Uber Receipts')).toBe('Uber');
+  });
+
+  test('returns alias for exact email match', () => {
+    expect(getFriendlySenderName('no-reply@amazon.com', 'Amazon')).toBe('Amazon');
+  });
+
+  test('falls back to display name if no alias', () => {
+    expect(getFriendlySenderName('info@unknown.com', 'Unknown Store')).toBe('Unknown Store');
+  });
+
+  test('falls back to capitalized domain name if no display name', () => {
+    expect(getFriendlySenderName('info@unknown.com', '')).toBe('Unknown');
+  });
+});
+
+// =============================================================================
+// determineCategory
+// =============================================================================
+
+describe('determineCategory', () => {
+  beforeAll(() => {
+    global.CONFIG = {
+      CATEGORIES: [
+        { name: 'Facturas', keywords: ['factura', 'invoice'] },
+        { name: 'Tickets', keywords: ['uber', 'vuelo'] },
+      ],
+      DEFAULT_CATEGORY: 'Otros'
+    };
+  });
+  
+  afterAll(() => {
+    delete global.CONFIG;
+  });
+
+  test('matches subject keyword', () => {
+    expect(determineCategory('Tu factura mensual', 'info@telcel.com', 'doc.pdf')).toBe('Facturas');
+  });
+
+  test('matches filename keyword', () => {
+    expect(determineCategory('Documento', 'info@unknown.com', 'invoice_123.pdf')).toBe('Facturas');
+  });
+
+  test('matches sender email keyword', () => {
+    expect(determineCategory('Recibo', 'receipts@uber.com', 'recibo.pdf')).toBe('Tickets');
+  });
+
+  test('returns default category if no match', () => {
+    expect(determineCategory('Hola', 'amigo@test.com', 'foto.jpg')).toBe('Otros');
   });
 });

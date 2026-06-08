@@ -157,7 +157,11 @@ npm run open
 
 ```
 gmail-cleanup-scripts/
-├── cleanup-attachments.gs     # Main Apps Script — core logic and wrappers
+├── config.gs                  # Configuration variables
+├── main.gs                    # Main execution loop and core logic
+├── reports.gs                 # Stats, HTML emails, and Spreadsheet tracking
+├── migration.gs               # One-time structure migration utilities
+├── gas-utils.gs               # Google Apps Script specific helpers
 ├── utils.gs                   # Pure utility functions (shared scope in GAS)
 ├── __tests__/                 # Local Jest test suites
 │   └── utils.test.js          # 100% coverage tests for utils.gs

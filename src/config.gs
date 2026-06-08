@@ -67,5 +67,44 @@ const CONFIG = {
    * Leave empty to auto-create on the first run with ENABLE_DASHBOARD: true.
    */
   DASHBOARD_SPREADSHEET_ID: '',
+  /**
+   * Sender aliases to clean up weird names or domain names.
+   * Matches domain or exact email and replaces the sender name with the alias.
+   * Keys can be exact email or @domain.
+   */
+  SENDER_ALIASES: {
+    '@uber.com': 'Uber',
+    '@didi.com': 'DiDi',
+    '@netflix.com': 'Netflix',
+    '@amazon.com': 'Amazon',
+    '@amazon.com.mx': 'Amazon',
+    '@mercadolibre.com': 'Mercado Libre',
+    '@mercadolibre.com.mx': 'Mercado Libre',
+    '@mercadopago.com.mx': 'Mercado Pago',
+    '@telcel.com': 'Telcel',
+    '@cfe.mx': 'CFE',
+    '@banamex.com': 'Banamex',
+    '@bbva.com': 'BBVA',
+    '@santander.com.mx': 'Santander',
+  },
+  /**
+   * Rules for intelligent filtering. Each category is checked in order.
+   * A file/email matches a category if it contains any of the keywords in the
+   * subject, filename, or sender domain/email.
+   */
+  CATEGORIES: [
+    { name: 'Facturas', keywords: ['factura', 'invoice', 'recibo', 'receipt', 'comprobante', 'xml'] },
+    { name: 'Estados de Cuenta', keywords: ['estado de cuenta', 'account statement', 'statement'] },
+    { name: 'Tickets_Viajes', keywords: ['ticket', 'vuelo', 'reservacion', 'itinerary', 'boleto', 'aeromexico', 'volaris', 'vivaaerobus', 'uber', 'didi'] },
+    { name: 'Contrasenas', keywords: ['password', 'contraseña', 'reset', 'recovery', 'security code', 'codigo', 'verificacion'] },
+    { name: 'Marketing', keywords: ['newsletter', 'promocion', 'oferta', 'descuento', 'sale'] },
+    { name: 'Hipoteca', keywords: ['hipoteca', 'mortgage', 'infonavit'] },
+    { name: 'Importantes', keywords: ['importante', 'urgent', 'aviso', 'notificacion'] },
+    { name: 'Personales', keywords: ['personal', 'family', 'amigo'] }
+  ],
+  /**
+   * Default category for emails that don't match any rules.
+   */
+  DEFAULT_CATEGORY: 'Otros',
 };
 

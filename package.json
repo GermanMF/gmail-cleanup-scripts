@@ -25,11 +25,21 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "moduleFileExtensions": ["js", "gs"],
-    "testMatch": ["**/__tests__/**/*.test.js"],
+    "moduleFileExtensions": [
+      "js",
+      "gs"
+    ],
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
     "coverageDirectory": "coverage",
-    "collectCoverageFrom": ["utils.gs"],
-    "coverageReporters": ["text", "lcov"]
+    "collectCoverageFrom": [
+      "src/**/*.gs"
+    ],
+    "coverageReporters": [
+      "text",
+      "lcov"
+    ]
   },
   "keywords": [
     "google-apps-script",
