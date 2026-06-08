@@ -2,7 +2,7 @@
 
 > **Read this first.** Persistent AI and contributor context for the `gmail-cleanup-scripts` repository.
 > Keep this file updated whenever the architecture, scope, or major decisions change.
-> Last updated: 2026-06-03
+> Last updated: 2026-06-07
 
 ---
 
@@ -104,6 +104,11 @@ Gmail_Attachments_Archive/
 | `computeThresholdDate(months)` | ⚠️ UTC-sensitive — see Gotchas |
 | `isSenderExcluded(email)` | Checks email against `CONFIG.EXCLUDED_SENDERS` (exact or `@domain`) |
 | `fileExistsInFolder(folder, name)` | Read-only dedup check before `createFile` |
+| `collectCleanupStats()` | Shared stat collector for HTML report + dashboard |
+| `sendHtmlCleanupReport(title?, batch?)` | Sends styled HTML email via `MailApp` |
+| `buildHtmlReportBody(title, stats, batch)` | Builds email-safe table-based HTML string |
+| `updateSpreadsheetDashboard(batch?)` | Appends to Run History + refreshes Summary sheet |
+| `getOrCreateDashboard()` | Idempotent — creates spreadsheet + sheets on first run |
 
 ---
 
@@ -126,7 +131,7 @@ Gmail_Attachments_Archive/
 
 ### 🔴 High
 - [x] `clasp` CLI integration — **DONE** (2026-06-07)
-- [ ] Unit-testable utility layer (`utils.gs` + Jest stubs)
+- [x] Unit-testable utility layer (`utils.gs` + Jest stubs) — **DONE** (2026-06-07)
 
 ### 🟡 Medium
 - [x] Attachment deduplication (`fileExistsInFolder`) — **DONE** (2026-06-07)
@@ -135,8 +140,8 @@ Gmail_Attachments_Archive/
 - [ ] Dry-run mode (`DRY_RUN` config flag)
 
 ### 🟢 Low
-- [ ] HTML email report
-- [ ] Spreadsheet dashboard (historical stats)
+- [x] HTML email report (`sendHtmlCleanupReport` + `buildHtmlReportBody`) — **DONE** (2026-06-07)
+- [x] Spreadsheet dashboard (`updateSpreadsheetDashboard` + `getOrCreateDashboard`) — **DONE** (2026-06-07)
 - [ ] Multi-account support investigation
 
 ---

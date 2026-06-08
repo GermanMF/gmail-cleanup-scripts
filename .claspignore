@@ -4,9 +4,11 @@
 #  Syntax: uses .gitignore-style globs.
 # ──────────────────────────────────────────────
 
-# Node tooling — NEVER deploy to GAS
+# Node tooling & tests — NEVER deploy to GAS
 node_modules/**
 node_modules/
+__tests__/**
+coverage/**
 
 # npm config files
 package.json

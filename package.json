@@ -14,11 +14,22 @@
     "logs": "clasp logs --watch",
     "deploy": "clasp deploy --description \"$(node -e 'console.log(new Date().toISOString())') auto-deploy\"",
     "undeploy": "clasp undeploy --all",
-    "push:dry": "clasp push --dry-run"
+    "push:dry": "clasp push --dry-run",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch"
   },
   "devDependencies": {
     "@google/clasp": "^3.3.0",
-    "@types/google-apps-script": "^1.0.92"
+    "@types/google-apps-script": "^1.0.92",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "moduleFileExtensions": ["js", "gs"],
+    "testMatch": ["**/__tests__/**/*.test.js"],
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": ["utils.gs"],
+    "coverageReporters": ["text", "lcov"]
   },
   "keywords": [
     "google-apps-script",

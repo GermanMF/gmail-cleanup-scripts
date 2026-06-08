@@ -45,6 +45,28 @@ const CONFIG = {
    * @example ['noreply@spam.com', '@newsletters.co']
    */
   EXCLUDED_SENDERS: [],
+  /**
+   * Set to true to send an HTML-formatted cleanup report email after each run.
+   * The email is sent to REPORT_EMAIL, or the active user's account if left empty.
+   * Requires the gmail.send OAuth scope (already included in appsscript.json).
+   */
+  ENABLE_HTML_REPORT: false,
+  /**
+   * Recipient email address for the HTML report.
+   * Leave empty to default to the Google account running the script.
+   */
+  REPORT_EMAIL: '',
+  /**
+   * Set to true to append a run record to a Google Sheets dashboard after each run.
+   * On first run a new spreadsheet is created and its ID is logged — copy it into
+   * DASHBOARD_SPREADSHEET_ID so future runs reuse the same sheet.
+   */
+  ENABLE_DASHBOARD: false,
+  /**
+   * Google Sheets spreadsheet ID for the historical dashboard.
+   * Leave empty to auto-create on the first run with ENABLE_DASHBOARD: true.
+   */
+  DASHBOARD_SPREADSHEET_ID: '',
 };
 
 // =============================================================================
@@ -122,6 +144,16 @@ function processGmailAttachments() {
 
     // ── POST-CLEANUP snapshot ───────────────────────────────────────────────
     generateCleanupReport('POST-CLEANUP SNAPSHOT');
+
+    // ── Optional: HTML email report ─────────────────────────────────────────
+    if (CONFIG.ENABLE_HTML_REPORT) {
+      sendHtmlCleanupReport('Post-Cleanup Report', { archived: archivedCount, deleted: deletedCount });
+    }
+
+    // ── Optional: Spreadsheet dashboard ────────────────────────────────────
+    if (CONFIG.ENABLE_DASHBOARD) {
+      updateSpreadsheetDashboard({ archived: archivedCount, deleted: deletedCount });
+    }
 
   } catch (error) {
     Logger.log(`Critical error in processGmailAttachments: ${error}`);
@@ -352,19 +384,6 @@ function getDriveArchiveStats() {
   return result;
 }
 
-/**
- * Formats a key-value pair as a padded log line for the report.
- * @param {string} label Left-side label.
- * @param {string|number} value Right-side value.
- * @param {number} [width=48] Total line width for padding.
- * @returns {string} Formatted line.
- */
-function pad(label, value, width) {
-  const w = width || 48;
-  const str = String(value);
-  const dots = Math.max(1, w - label.length - str.length);
-  return `  ${label}${'·'.repeat(dots)}${str}`;
-}
 
 /**
  * STAGE 2 MIGRATION — Run this after migrateOldStructure (or if you already have
@@ -640,27 +659,399 @@ function migrateFile(file, baseFolder) {
   }
 }
 
+
+// =============================================================================
+// HTML REPORT & SPREADSHEET DASHBOARD
+// =============================================================================
+
 /**
- * Parses a filename created by the old version of the script.
- * Expected pattern: YYYYMMDD_localpart@domain.tld_OriginalName.ext
- * @param {string} filename Filename to parse.
- * @returns {{dateStr: string, senderEmail: string, senderLocal: string, restOfName: string}|null}
+ * Collects current Gmail and Drive statistics into a structured object.
+ * Shared by sendHtmlCleanupReport() and updateSpreadsheetDashboard() to avoid
+ * duplicating expensive Gmail query calls.
+ * @returns {{totalThreads: number, processed: number, recentUntouched: number,
+ *   toArchiveOnly: number, toArchiveDelete: number, totalPending: number,
+ *   runsRemaining: number, topSenders: Array, driveStats: Object}}
  */
-function parseOldFilename(filename) {
-  // Match: (8 digits) _ (anything with @) _ (rest)
-  const match = filename.match(/^(\d{8})_(.+?@[^_]+)_(.+)$/);
-  if (!match) return null;
+function collectCleanupStats() {
+  const archiveDate    = computeThresholdDate(CONFIG.ARCHIVE_AFTER_MONTHS);
+  const deleteDate     = computeThresholdDate(CONFIG.DELETE_AFTER_MONTHS);
+  const archiveDateStr = formatDateForQuery(archiveDate);
+  const deleteDateStr  = formatDateForQuery(deleteDate);
 
-  const dateStr = match[1];
-  const senderEmail = match[2].replace(/_/g, '.');  // restore dots that may have been replaced
-  const restOfName = match[3];
-  const senderLocal = extractLocalPart(senderEmail);
+  const totalThreads    = countThreads('has:attachment -in:chats');
+  const processed       = countThreads(`has:attachment -in:chats label:${CONFIG.PROCESSED_LABEL}`);
+  const recentUntouched = countThreads(`has:attachment -in:chats after:${archiveDateStr}`);
+  const toArchiveOnly   = countThreads([
+    'has:attachment -in:chats',
+    `-label:${CONFIG.PROCESSED_LABEL}`,
+    `before:${archiveDateStr}`,
+    `after:${deleteDateStr}`,
+  ].join(' '));
+  const toArchiveDelete = countThreads([
+    'has:attachment -in:chats',
+    `-label:${CONFIG.PROCESSED_LABEL}`,
+    `before:${deleteDateStr}`,
+  ].join(' '));
+  const totalPending  = toArchiveOnly + toArchiveDelete;
+  const runsRemaining = Math.ceil(totalPending / CONFIG.BATCH_SIZE);
+  const topSenders    = getTopSenders(
+    `has:attachment -in:chats -label:${CONFIG.PROCESSED_LABEL} before:${archiveDateStr}`,
+    10
+  );
+  const driveStats = getDriveArchiveStats();
 
-  return { dateStr, senderEmail, senderLocal, restOfName };
+  return {
+    totalThreads, processed, recentUntouched,
+    toArchiveOnly, toArchiveDelete, totalPending,
+    runsRemaining, topSenders, driveStats,
+  };
+}
+
+/**
+ * Sends a styled HTML cleanup report email.
+ * Collects fresh Gmail and Drive stats, builds the HTML body, and sends via MailApp.
+ * Can also be run standalone as a GAS entry point (no batchResult required).
+ * @param {string} [title='Gmail Cleanup Report'] Title shown in subject and email header.
+ * @param {{archived?: number, deleted?: number}} [batchResult] Per-run counters from the batch.
+ */
+function sendHtmlCleanupReport(title, batchResult) {
+  try {
+    const reportTitle = title || 'Gmail Cleanup Report';
+    const recipient   = CONFIG.REPORT_EMAIL || Session.getActiveUser().getEmail();
+    if (!recipient) {
+      Logger.log('sendHtmlCleanupReport: No recipient email found. Set CONFIG.REPORT_EMAIL.');
+      return;
+    }
+
+    Logger.log('Collecting stats for HTML report...');
+    const stats   = collectCleanupStats();
+    const html    = buildHtmlReportBody(reportTitle, stats, batchResult || {});
+    const subject = `📬 ${reportTitle} — ${new Date().toISOString().substring(0, 10)}`;
+
+    MailApp.sendEmail({ to: recipient, subject: subject, htmlBody: html });
+    Logger.log(`HTML report sent to: ${recipient}`);
+  } catch (error) {
+    Logger.log(`sendHtmlCleanupReport error: ${error}`);
+  }
+}
+
+/**
+ * Builds the full HTML email body for the cleanup report.
+ * Uses table-based layouts for maximum email client compatibility.
+ * @param {string} title Report title for the header and subject.
+ * @param {Object} stats Output from collectCleanupStats().
+ * @param {{archived?: number, deleted?: number}} batchResult Per-run counters.
+ * @returns {string} Complete HTML document string.
+ */
+function buildHtmlReportBody(title, stats, batchResult) {
+  const now          = new Date();
+  const dateStr      = now.toISOString().substring(0, 10);
+  const timeStr      = now.toTimeString().substring(0, 5);
+  const archived     = batchResult.archived || 0;
+  const deleted      = batchResult.deleted  || 0;
+  const progressPct  = stats.totalThreads > 0
+    ? ((stats.processed / stats.totalThreads) * 100).toFixed(1)
+    : '0.0';
+  const progressBar  = Math.round(parseFloat(progressPct));
+
+  const senderRows = stats.topSenders.length === 0
+    ? '<tr><td colspan="3" style="padding:14px 12px;color:#999;text-align:center;">No pending threads found</td></tr>'
+    : stats.topSenders.map(function (s, i) {
+        return `<tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#aaa;font-weight:700;width:32px;">${i + 1}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">${s.name}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${s.count}</td>
+        </tr>`;
+      }).join('');
+
+  const driveRows = stats.driveStats.found
+    ? `<tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">Files saved to Drive</td>
+         <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${stats.driveStats.totalFiles.toLocaleString()}</td></tr>
+       <tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">Unique senders</td>
+         <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${stats.driveStats.senderFolders}</td></tr>
+       <tr><td style="padding:10px 12px;">Year folders</td>
+         <td style="padding:10px 12px;text-align:right;font-weight:700;">${stats.driveStats.yearFolders}</td></tr>`
+    : '<tr><td colspan="2" style="padding:14px 12px;color:#999;">Archive folder not found — run processGmailAttachments first.</td></tr>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${title}</title></head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;color:#333;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0f4f8;padding:24px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
+
+  <!-- HEADER -->
+  <tr><td style="background:#1a73e8;padding:36px 32px;border-radius:12px 12px 0 0;">
+    <div style="font-size:26px;font-weight:700;color:#fff;">📬 Gmail Cleanup</div>
+    <div style="font-size:14px;color:rgba(255,255,255,0.82);margin-top:6px;">${title} &nbsp;·&nbsp; ${dateStr} at ${timeStr}</div>
+  </td></tr>
+
+  <!-- BODY -->
+  <tr><td style="background:#fff;padding:32px;border-radius:0 0 12px 12px;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+
+    <!-- SECTION LABEL -->
+    <div style="font-size:11px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:14px;">This Run</div>
+
+    <!-- STAT CARDS -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
+    <tr>
+      <td width="33%" style="padding-right:8px;">
+        <table width="100%" cellpadding="16" cellspacing="0" style="background:#e8f5e9;border-radius:10px;text-align:center;">
+        <tr><td>
+          <div style="font-size:42px;font-weight:800;color:#2e7d32;line-height:1;">${archived}</div>
+          <div style="font-size:11px;color:#558b2f;text-transform:uppercase;letter-spacing:0.6px;margin-top:6px;font-weight:600;">Archived &amp; Kept</div>
+        </td></tr></table>
+      </td>
+      <td width="33%" style="padding:0 4px;">
+        <table width="100%" cellpadding="16" cellspacing="0" style="background:#fce4ec;border-radius:10px;text-align:center;">
+        <tr><td>
+          <div style="font-size:42px;font-weight:800;color:#c62828;line-height:1;">${deleted}</div>
+          <div style="font-size:11px;color:#ad1457;text-transform:uppercase;letter-spacing:0.6px;margin-top:6px;font-weight:600;">Archived &amp; Deleted</div>
+        </td></tr></table>
+      </td>
+      <td width="33%" style="padding-left:8px;">
+        <table width="100%" cellpadding="16" cellspacing="0" style="background:#fff8e1;border-radius:10px;text-align:center;">
+        <tr><td>
+          <div style="font-size:42px;font-weight:800;color:#e65100;line-height:1;">${stats.totalPending}</div>
+          <div style="font-size:11px;color:#bf360c;text-transform:uppercase;letter-spacing:0.6px;margin-top:6px;font-weight:600;">Still Pending</div>
+        </td></tr></table>
+      </td>
+    </tr>
+    </table>
+
+    <!-- PROGRESS -->
+    <div style="margin-bottom:30px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:7px;">
+      <tr>
+        <td style="font-size:13px;color:#555;font-weight:600;">Overall Progress</td>
+        <td style="font-size:13px;color:#1a73e8;font-weight:700;text-align:right;">${progressPct}% complete</td>
+      </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#e8eaf6;border-radius:99px;height:8px;overflow:hidden;">
+      <tr>
+        <td width="${progressBar}%" style="background:#1a73e8;height:8px;border-radius:99px;"></td>
+        <td></td>
+      </tr>
+      </table>
+      <div style="font-size:12px;color:#aaa;margin-top:5px;">${stats.processed.toLocaleString()} of ${stats.totalThreads.toLocaleString()} threads processed &nbsp;·&nbsp; ~${stats.runsRemaining} runs remaining</div>
+    </div>
+
+    <!-- AGE BREAKDOWN -->
+    <div style="font-size:15px;font-weight:700;color:#333;border-bottom:2px solid #e8eaf6;padding-bottom:8px;margin-bottom:14px;">⏳ Age Breakdown</div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;margin-bottom:28px;">
+      <tr style="background:#f8f9fa;">
+        <th style="text-align:left;padding:10px 12px;font-weight:600;color:#666;">Age Range</th>
+        <th style="text-align:left;padding:10px 12px;font-weight:600;color:#666;">Action</th>
+        <th style="text-align:right;padding:10px 12px;font-weight:600;color:#666;">Count</th>
+      </tr>
+      <tr>
+        <td style="padding:11px 12px;border-bottom:1px solid #f0f0f0;">&lt; ${CONFIG.ARCHIVE_AFTER_MONTHS} months</td>
+        <td style="padding:11px 12px;border-bottom:1px solid #f0f0f0;"><span style="background:#f5f5f5;color:#777;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Untouched</span></td>
+        <td style="padding:11px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${stats.recentUntouched.toLocaleString()}</td>
+      </tr>
+      <tr>
+        <td style="padding:11px 12px;border-bottom:1px solid #f0f0f0;">${CONFIG.ARCHIVE_AFTER_MONTHS}–${CONFIG.DELETE_AFTER_MONTHS} months</td>
+        <td style="padding:11px 12px;border-bottom:1px solid #f0f0f0;"><span style="background:#e3f2fd;color:#1565c0;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Archive + Keep</span></td>
+        <td style="padding:11px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${stats.toArchiveOnly.toLocaleString()}</td>
+      </tr>
+      <tr>
+        <td style="padding:11px 12px;">&gt; ${CONFIG.DELETE_AFTER_MONTHS} months</td>
+        <td style="padding:11px 12px;"><span style="background:#fce4ec;color:#c62828;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Archive + Delete</span></td>
+        <td style="padding:11px 12px;text-align:right;font-weight:700;">${stats.toArchiveDelete.toLocaleString()}</td>
+      </tr>
+    </table>
+
+    <!-- TOP SENDERS -->
+    <div style="font-size:15px;font-weight:700;color:#333;border-bottom:2px solid #e8eaf6;padding-bottom:8px;margin-bottom:14px;">🏆 Top 10 Senders (Pending)</div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;margin-bottom:28px;">
+      <tr style="background:#f8f9fa;">
+        <th style="text-align:left;padding:10px 12px;font-weight:600;color:#666;width:36px;">#</th>
+        <th style="text-align:left;padding:10px 12px;font-weight:600;color:#666;">Sender</th>
+        <th style="text-align:right;padding:10px 12px;font-weight:600;color:#666;">Threads</th>
+      </tr>
+      ${senderRows}
+    </table>
+
+    <!-- DRIVE STATS -->
+    <div style="font-size:15px;font-weight:700;color:#333;border-bottom:2px solid #e8eaf6;padding-bottom:8px;margin-bottom:14px;">📁 Drive Archive (${CONFIG.BASE_FOLDER_NAME})</div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;margin-bottom:28px;">
+      <tr style="background:#f8f9fa;">
+        <th style="text-align:left;padding:10px 12px;font-weight:600;color:#666;">Metric</th>
+        <th style="text-align:right;padding:10px 12px;font-weight:600;color:#666;">Value</th>
+      </tr>
+      ${driveRows}
+    </table>
+
+    <!-- FORECAST -->
+    <div style="font-size:15px;font-weight:700;color:#333;border-bottom:2px solid #e8eaf6;padding-bottom:8px;margin-bottom:14px;">🏃 Execution Forecast</div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;margin-bottom:28px;">
+      <tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#666;">Batch size</td><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${CONFIG.BATCH_SIZE} threads</td></tr>
+      <tr><td style="padding:10px 12px;color:#666;">Estimated runs remaining</td><td style="padding:10px 12px;text-align:right;font-weight:700;">${stats.runsRemaining}</td></tr>
+    </table>
+
+    <!-- FOOTER -->
+    <div style="border-top:1px solid #eee;padding-top:16px;font-size:12px;color:#bbb;text-align:center;">
+      Gmail Cleanup Scripts &nbsp;·&nbsp; ${dateStr} ${timeStr} &nbsp;·&nbsp; Sent via Google Apps Script
+    </div>
+
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
+/**
+ * Appends a run record to the "Run History" sheet and refreshes the "Summary"
+ * sheet in the Gmail Cleanup Dashboard spreadsheet.
+ * If CONFIG.DASHBOARD_SPREADSHEET_ID is empty, creates a new spreadsheet automatically
+ * and logs its ID — copy it into CONFIG to link future runs.
+ * Can also be called as a standalone GAS entry point.
+ * @param {{archived?: number, deleted?: number}} [batchResult] Per-run counters.
+ */
+function updateSpreadsheetDashboard(batchResult) {
+  try {
+    Logger.log('Collecting stats for dashboard...');
+    const stats    = collectCleanupStats();
+    const result   = batchResult || {};
+    const archived = result.archived || 0;
+    const deleted  = result.deleted  || 0;
+    const now      = new Date();
+
+    const { spreadsheet, historySheet, summarySheet } = getOrCreateDashboard();
+
+    // ── Append to Run History ─────────────────────────────────────────────
+    historySheet.appendRow([
+      now,                               // A: Timestamp
+      archived,                          // B: Archived & Kept (this run)
+      deleted,                           // C: Archived & Deleted (this run)
+      stats.totalPending,                // D: Total Pending
+      stats.toArchiveOnly,               // E: Pending (archive + keep)
+      stats.toArchiveDelete,             // F: Pending (archive + delete)
+      stats.processed,                   // G: Total Processed (cumulative)
+      stats.totalThreads,                // H: Total Threads in Mailbox
+      stats.driveStats.totalFiles || 0,  // I: Drive Files (total)
+      stats.runsRemaining,               // J: Estimated Runs Remaining
+    ]);
+
+    // ── Refresh Summary sheet ─────────────────────────────────────────────
+    summarySheet.clearContents();
+    const summaryData = [
+      ['Gmail Cleanup Dashboard', 'Last Updated: ' + now.toISOString()],
+      ['', ''],
+      ['📬 LAST RUN', ''],
+      ['Archived & Kept',    archived],
+      ['Archived & Deleted', deleted],
+      ['', ''],
+      ['⏳ CURRENT STATE', ''],
+      ['Total Threads',                                              stats.totalThreads],
+      ['Processed (cumulative)',                                     stats.processed],
+      ['Pending — Archive + Keep',                                   stats.toArchiveOnly],
+      ['Pending — Archive + Delete',                                 stats.toArchiveDelete],
+      ['Total Pending',                                              stats.totalPending],
+      ['Recent Untouched (< ' + CONFIG.ARCHIVE_AFTER_MONTHS + ' mo)', stats.recentUntouched],
+      ['', ''],
+      ['🏃 FORECAST', ''],
+      ['Batch Size',               CONFIG.BATCH_SIZE],
+      ['Runs Remaining (est.)',    stats.runsRemaining],
+      ['', ''],
+      ['📁 DRIVE ARCHIVE', ''],
+      ['Total Files',       stats.driveStats.totalFiles    || 0],
+      ['Unique Senders',    stats.driveStats.senderFolders || 0],
+      ['Year Folders',      stats.driveStats.yearFolders   || 0],
+    ];
+
+    const range = summarySheet.getRange(1, 1, summaryData.length, 2);
+    range.setValues(summaryData);
+
+    // Header row
+    summarySheet.getRange(1, 1, 1, 2).setFontWeight('bold').setFontSize(13)
+      .setBackground('#1a73e8').setFontColor('#ffffff');
+
+    // Section label rows
+    [3, 7, 15, 19].forEach(function (row) {
+      summarySheet.getRange(row, 1).setFontWeight('bold').setBackground('#e8f0fe');
+      summarySheet.getRange(row, 2).setBackground('#e8f0fe');
+    });
+
+    summarySheet.autoResizeColumn(1);
+    summarySheet.autoResizeColumn(2);
+
+    Logger.log('Dashboard updated: ' + spreadsheet.getUrl());
+  } catch (error) {
+    Logger.log(`updateSpreadsheetDashboard error: ${error}`);
+  }
+}
+
+/**
+ * Returns (and if needed, creates) the Gmail Cleanup Dashboard spreadsheet
+ * along with its "Run History" and "Summary" sheets.
+ * If CONFIG.DASHBOARD_SPREADSHEET_ID is empty, a new spreadsheet is created
+ * and its ID is logged so the user can persist it in CONFIG.
+ * @returns {{spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+ *   historySheet: GoogleAppsScript.Spreadsheet.Sheet,
+ *   summarySheet: GoogleAppsScript.Spreadsheet.Sheet}}
+ */
+function getOrCreateDashboard() {
+  let spreadsheet;
+  let isNew = false;
+
+  if (CONFIG.DASHBOARD_SPREADSHEET_ID) {
+    spreadsheet = SpreadsheetApp.openById(CONFIG.DASHBOARD_SPREADSHEET_ID);
+  } else {
+    spreadsheet = SpreadsheetApp.create('Gmail Cleanup Dashboard');
+    isNew = true;
+    Logger.log('');
+    Logger.log('⚠️  Created a new Gmail Cleanup Dashboard spreadsheet.');
+    Logger.log('   URL: ' + spreadsheet.getUrl());
+    Logger.log('   Copy this ID into CONFIG.DASHBOARD_SPREADSHEET_ID:');
+    Logger.log('   "' + spreadsheet.getId() + '"');
+    Logger.log('');
+  }
+
+  // ── Run History sheet ─────────────────────────────────────────────────
+  let historySheet = spreadsheet.getSheetByName('Run History');
+  if (!historySheet) {
+    historySheet = isNew ? spreadsheet.getActiveSheet() : spreadsheet.insertSheet();
+    historySheet.setName('Run History');
+
+    const headers = [
+      'Timestamp', 'Archived & Kept', 'Archived & Deleted',
+      'Total Pending', 'Pending (keep)', 'Pending (delete)',
+      'Total Processed', 'Total Threads', 'Drive Files', 'Runs Remaining',
+    ];
+    const headerRange = historySheet.getRange(1, 1, 1, headers.length);
+    headerRange.setValues([headers]);
+    headerRange.setBackground('#1a73e8').setFontColor('#ffffff')
+      .setFontWeight('bold').setFontSize(11);
+    historySheet.setFrozenRows(1);
+    historySheet.setColumnWidth(1, 165);  // Timestamp
+    for (var c = 2; c <= headers.length; c++) {
+      historySheet.setColumnWidth(c, 128);
+    }
+  }
+
+  // ── Summary sheet ─────────────────────────────────────────────────────
+  let summarySheet = spreadsheet.getSheetByName('Summary');
+  if (!summarySheet) {
+    summarySheet = spreadsheet.insertSheet('Summary');
+    summarySheet.setColumnWidth(1, 300);
+    summarySheet.setColumnWidth(2, 200);
+  }
+
+  return { spreadsheet: spreadsheet, historySheet: historySheet, summarySheet: summarySheet };
 }
 
 // =============================================================================
 // UTILITY FUNCTIONS
+// =============================================================================
+// Pure string and date utilities (sanitizeFilename, extractEmailAddress,
+// extractDisplayName, extractLocalPart, pad, getDateString, getYearString,
+// formatDateForQuery, computeThresholdDate, parseOldFilename) live in utils.gs.
+// GAS loads both files in the same scope, so they are available here automatically.
+// For unit tests, see __tests__/utils.test.js.
 // =============================================================================
 
 /**
@@ -731,93 +1122,3 @@ function getOrCreateFolder(parentFolder, folderName) {
   }
 }
 
-/**
- * Extracts a clean email address from a raw "Display Name <email@domain.com>" string.
- * @param {string} senderString Raw sender string from Gmail.
- * @returns {string} Extracted email address or the original string if no angle brackets.
- */
-function extractEmailAddress(senderString) {
-  const match = senderString.match(/<([^>]+)>/);
-  return match ? match[1] : senderString;
-}
-
-/**
- * Extracts the display name from a raw "Display Name <email@domain.com>" string.
- * Falls back to the local part of the email address if no display name is present.
- * @param {string} senderString Raw sender string from Gmail.
- * @returns {string} Display name (e.g. "G2A.com") or local part (e.g. "info").
- */
-function extractDisplayName(senderString) {
-  // Format: "Display Name <email@domain.com>" or just "email@domain.com"
-  const nameMatch = senderString.match(/^([^<]+)</);
-  if (nameMatch) {
-    const name = nameMatch[1].trim().replace(/^"|"$/g, ''); // strip surrounding quotes
-    if (name.length > 0) return name;
-  }
-  // Fallback: use local part of the email address
-  const email = extractEmailAddress(senderString);
-  return extractLocalPart(email);
-}
-
-/**
- * Extracts the local part (before @) from an email address.
- * @param {string} email Full email address.
- * @returns {string} Local part, or full email if no @ is found.
- */
-function extractLocalPart(email) {
-  const atIndex = email.indexOf('@');
-  return atIndex !== -1 ? email.substring(0, atIndex) : email;
-}
-
-/**
- * Replaces characters illegal in Drive file/folder names with underscores.
- * @param {string} name Raw string.
- * @returns {string} Safe string for use as a filename or folder name.
- */
-function sanitizeFilename(name) {
-  return name.replace(/[\/\\:\*\?"<>\|]/g, '_').replace(/\s+/g, '_');
-}
-
-/**
- * Formats a Date as YYYYMMDD.
- * @param {Date} date Date to format.
- * @returns {string} Formatted date string.
- */
-function getDateString(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}${month}${day}`;
-}
-
-/**
- * Extracts the 4-digit year from a Date.
- * @param {Date} date Date object.
- * @returns {string} Year as string.
- */
-function getYearString(date) {
-  return String(date.getFullYear());
-}
-
-/**
- * Computes a threshold Date by subtracting a number of months from today.
- * @param {number} months Number of months to subtract from the current date.
- * @returns {Date} The resulting threshold date.
- */
-function computeThresholdDate(months) {
-  const date = new Date();
-  date.setMonth(date.getMonth() - months);
-  return date;
-}
-
-/**
- * Formats a Date object as YYYY/MM/DD for use in Gmail search queries (before: / after:).
- * @param {Date} date Date to format.
- * @returns {string} Date string in YYYY/MM/DD format.
- */
-function formatDateForQuery(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}/${month}/${day}`;
-}

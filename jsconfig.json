@@ -8,14 +8,16 @@
     "checkJs": false
   },
   "include": [
-    "*.gs"
+    "**/*.gs",
+    "**/*.js"
   ],
   "exclude": [
     "node_modules"
   ],
   "typeAcquisition": {
     "include": [
-      "google-apps-script"
+      "google-apps-script",
+      "jest"
     ]
   }
 }

@@ -40,6 +40,7 @@ desktop.ini
 # Build / dist output (if clasp push is ever used)
 dist/
 build/
+coverage/
 
 # Logs
 *.log
