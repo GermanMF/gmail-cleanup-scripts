@@ -41,10 +41,15 @@ function migrateEmailFoldersToDisplayName() {
       while (yearFolders.hasNext()) {
         const yearFolder = yearFolders.next();
         const newYearFolder = getOrCreateFolder(newEmailFolder, yearFolder.getName());
-        const files = yearFolder.getFiles();
+        const filesIter = yearFolder.getFiles();
+        const filesToMove = [];
+        while (filesIter.hasNext()) {
+          filesToMove.push(filesIter.next());
+        }
 
-        while (files.hasNext()) {
-          const file = files.next();
+        for (let i = 0; i < filesToMove.length; i++) {
+          const file = filesToMove[i];
+          if (file.isTrashed()) continue;
           try {
             newYearFolder.addFile(file);
             yearFolder.removeFile(file);
@@ -115,10 +120,16 @@ function migrateOldStructure() {
       // Iterate through month subfolders (e.g. "06_June")
       while (monthFolders.hasNext()) {
         const monthFolder = monthFolders.next();
-        const files = monthFolder.getFiles();
+        const filesIter = monthFolder.getFiles();
+        const filesToMigrate = [];
 
-        while (files.hasNext()) {
-          const file = files.next();
+        while (filesIter.hasNext()) {
+          filesToMigrate.push(filesIter.next());
+        }
+
+        for (let i = 0; i < filesToMigrate.length; i++) {
+          const file = filesToMigrate[i];
+          if (file.isTrashed()) continue;
           const result = migrateFile(file, baseFolder);
           if (result) {
             migratedCount++;
@@ -195,18 +206,24 @@ function migrateToIntelligentCategories() {
 
     while (categoryFolders.hasNext()) {
       const topFolder = categoryFolders.next();
-      
+
       const subFolders = topFolder.getFolders();
       while (subFolders.hasNext()) {
         const subFolder = subFolders.next();
         const yearFolders = subFolder.getFolders();
-        
+
         while (yearFolders.hasNext()) {
           const yearFolder = yearFolders.next();
-          const files = yearFolder.getFiles();
+          const filesIter = yearFolder.getFiles();
+          const filesToMigrate = [];
           
-          while (files.hasNext()) {
-            const file = files.next();
+          while (filesIter.hasNext()) {
+            filesToMigrate.push(filesIter.next());
+          }
+          
+          for (let i = 0; i < filesToMigrate.length; i++) {
+            const file = filesToMigrate[i];
+            if (file.isTrashed()) continue;
             const success = migrateFileToCategory(file, baseFolder);
             if (success) migratedCount++;
             else errorCount++;
@@ -214,7 +231,7 @@ function migrateToIntelligentCategories() {
         }
       }
     }
-    
+
     Logger.log(`Stage 3 migration complete. Migrated: ${migratedCount} | Errors: ${errorCount}`);
   } catch (error) {
     Logger.log(`Critical error in migrateToIntelligentCategories: ${error}`);
@@ -230,34 +247,34 @@ function migrateFileToCategory(file, baseFolder) {
     const parentFolder = file.getParents().next(); // year
     const emailFolder = parentFolder.getParents().next(); // email
     const senderEmail = emailFolder.getName();
-    
+
     if (!senderEmail.includes('@')) {
       return false; // not an email folder, skip
     }
-    
+
     const category = determineCategory('', senderEmail, filename);
-    const friendlyName = getFriendlySenderName(senderEmail, ''); 
-    
+    const friendlyName = getFriendlySenderName(senderEmail, '');
+
     const currentPath = `${emailFolder.getParents().next().getName()}/${senderEmail}/${parentFolder.getName()}`;
     const targetPath = `${category}/${friendlyName}/${parentFolder.getName()}`;
-    
+
     if (currentPath === targetPath) {
-      return false; 
+      return false;
     }
-    
+
     const categoryFolder = getOrCreateFolder(baseFolder, sanitizeFilename(category));
     const friendlyFolder = getOrCreateFolder(categoryFolder, sanitizeFilename(friendlyName));
     const yearFolder = getOrCreateFolder(friendlyFolder, parentFolder.getName());
-    
+
     if (fileExistsInFolder(yearFolder, filename)) {
       Logger.log(`  Duplicate found during migration! Trashing source file: ${filename}`);
       file.setTrashed(true);
       return true;
     }
-    
+
     yearFolder.addFile(file);
     parentFolder.removeFile(file);
-    
+
     Logger.log(`  Moved ${filename} to ${category}/${friendlyName}/${parentFolder.getName()}/`);
     return true;
   } catch (error) {
@@ -281,11 +298,11 @@ function cleanUpAllDuplicates() {
     while (categoryFolders.hasNext()) {
       const categoryFolder = categoryFolders.next();
       const friendlyFolders = categoryFolder.getFolders();
-      
+
       while (friendlyFolders.hasNext()) {
         const friendlyFolder = friendlyFolders.next();
         const yearFolders = friendlyFolder.getFolders();
-        
+
         while (yearFolders.hasNext()) {
           const yearFolder = yearFolders.next();
           const trashedInFolder = removeDuplicatesInFolder(yearFolder);
@@ -293,7 +310,7 @@ function cleanUpAllDuplicates() {
         }
       }
     }
-    
+
     Logger.log(`Duplicate cleanup complete. Total files trashed: ${totalTrashed}`);
   } catch (error) {
     Logger.log(`Critical error in cleanUpAllDuplicates: ${error}`);
@@ -310,20 +327,26 @@ function removeDuplicatesInFolder(folder) {
   try {
     const files = folder.getFiles();
     const seenNames = new Set();
-    
+
+    const toTrash = [];
+
     while (files.hasNext()) {
       const file = files.next();
-      if (file.isTrashed()) continue; // Evita procesar archivos que ya están en la papelera
-      
+      if (file.isTrashed()) continue;
+
       const name = file.getName();
-      
+
       if (seenNames.has(name)) {
-        Logger.log(`    Trashing duplicate: ${name} (Folder: ${folder.getName()})`);
-        file.setTrashed(true);
-        trashedCount++;
+        toTrash.push(file);
       } else {
         seenNames.add(name);
       }
+    }
+
+    for (let i = 0; i < toTrash.length; i++) {
+      Logger.log(`    Trashing duplicate: ${toTrash[i].getName()} (Folder: ${folder.getName()})`);
+      toTrash[i].setTrashed(true);
+      trashedCount++;
     }
   } catch (error) {
     Logger.log(`  Error cleaning duplicates in folder "${folder.getName()}": ${error}`);
