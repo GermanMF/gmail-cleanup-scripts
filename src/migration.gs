@@ -249,6 +249,12 @@ function migrateFileToCategory(file, baseFolder) {
     const friendlyFolder = getOrCreateFolder(categoryFolder, sanitizeFilename(friendlyName));
     const yearFolder = getOrCreateFolder(friendlyFolder, parentFolder.getName());
     
+    if (fileExistsInFolder(yearFolder, filename)) {
+      Logger.log(`  Duplicate found during migration! Trashing source file: ${filename}`);
+      file.setTrashed(true);
+      return true;
+    }
+    
     yearFolder.addFile(file);
     parentFolder.removeFile(file);
     
@@ -258,4 +264,67 @@ function migrateFileToCategory(file, baseFolder) {
     Logger.log(`  Error migrating file "${file.getName()}": ${error}`);
     return false;
   }
+}
+
+
+/**
+ * Sweeps the entire Category / FriendlyName / YYYY structure and trashes duplicate files.
+ * Drive allows multiple files with the exact same name. This function keeps the first one
+ * it encounters and trashes subsequent ones with the same name in the same folder.
+ */
+function cleanUpAllDuplicates() {
+  try {
+    const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    const categoryFolders = baseFolder.getFolders();
+    let totalTrashed = 0;
+
+    while (categoryFolders.hasNext()) {
+      const categoryFolder = categoryFolders.next();
+      const friendlyFolders = categoryFolder.getFolders();
+      
+      while (friendlyFolders.hasNext()) {
+        const friendlyFolder = friendlyFolders.next();
+        const yearFolders = friendlyFolder.getFolders();
+        
+        while (yearFolders.hasNext()) {
+          const yearFolder = yearFolders.next();
+          const trashedInFolder = removeDuplicatesInFolder(yearFolder);
+          totalTrashed += trashedInFolder;
+        }
+      }
+    }
+    
+    Logger.log(`Duplicate cleanup complete. Total files trashed: ${totalTrashed}`);
+  } catch (error) {
+    Logger.log(`Critical error in cleanUpAllDuplicates: ${error}`);
+  }
+}
+
+/**
+ * Iterates through all files in a specific folder and trashes any with duplicate names.
+ * @param {GoogleAppsScript.Drive.Folder} folder 
+ * @returns {number} Number of files trashed.
+ */
+function removeDuplicatesInFolder(folder) {
+  let trashedCount = 0;
+  try {
+    const files = folder.getFiles();
+    const seenNames = new Set();
+    
+    while (files.hasNext()) {
+      const file = files.next();
+      const name = file.getName();
+      
+      if (seenNames.has(name)) {
+        Logger.log(`    Trashing duplicate: ${name} (Folder: ${folder.getName()})`);
+        file.setTrashed(true);
+        trashedCount++;
+      } else {
+        seenNames.add(name);
+      }
+    }
+  } catch (error) {
+    Logger.log(`  Error cleaning duplicates in folder "${folder.getName()}": ${error}`);
+  }
+  return trashedCount;
 }
