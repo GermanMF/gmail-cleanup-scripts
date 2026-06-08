@@ -71,30 +71,74 @@ const CONFIG = {
 
 ### Prerequisites
 - A Google Account with Gmail and Drive access.
-- Access to [Google Apps Script](https://script.google.com).
+- Node.js ≥ 18 (for `clasp` CLI tooling).
+- An existing [Google Apps Script](https://script.google.com) project.
 
-### Steps
+---
 
-1. **Create a new Apps Script project:**
-   - Go to [script.google.com](https://script.google.com) → **New project**
-   - Delete all default content.
+### Option A — clasp (recommended for development)
 
-2. **Paste the script:**
-   - Copy the entire contents of `cleanup-attachments.gs` into the script editor.
+This is the primary workflow. Changes are pushed/pulled via CLI — no copy-paste.
 
-3. **Configure:**
-   - Edit the `CONFIG` object at the top to match your preferences.
+```bash
+# 1. Install dependencies
+npm install
 
-4. **Run manually first:**
+# 2. Authenticate with your Google account (one-time)
+clasp login
+
+# 3. Configure your Script ID
+cp .clasp.json.template .clasp.json
+# Edit .clasp.json and replace YOUR_SCRIPT_ID_HERE with your real Script ID
+# (found in script.google.com → Project Settings → Script ID)
+
+# 4. Preview what will be pushed (dry run)
+npm run push:dry
+
+# 5. Push to Google Apps Script
+npm run push
+
+# 6. Open the project in the browser
+npm run open
+```
+
+**Available npm scripts:**
+
+| Script | Command | Description |
+|---|---|---|
+| `npm run push` | `clasp push` | Upload local files to GAS |
+| `npm run pull` | `clasp pull` | Download remote changes locally |
+| `npm run open` | `clasp open` | Open project in browser |
+| `npm run status` | `clasp status` | Show which files differ |
+| `npm run logs` | `clasp logs --watch` | Tail live execution logs |
+| `npm run push:dry` | `clasp push --dry-run` | Preview files to be pushed |
+
+> ⚠️ Never commit `.clasp.json` — it is gitignored. Commit only `.clasp.json.template`.
+
+---
+
+### Option B — Manual (no CLI)
+
+1. Go to [script.google.com](https://script.google.com) → **New project** → delete default content.
+2. Copy the entire contents of `cleanup-attachments.gs` into the editor.
+3. Click **Save**, then continue with step 4 below.
+
+---
+
+### Running & Triggering
+
+4. **Configure:** Edit the `CONFIG` object at the top of `cleanup-attachments.gs`.
+
+5. **Run manually first:**
    - Run `generateCleanupReport` to see your mailbox state before touching anything.
    - Then run `processGmailAttachments` to start the first batch.
 
-5. **Set up a time-based trigger (optional):**
+6. **Set up a time-based trigger (optional):**
    - Go to **Triggers** (clock icon) → **Add Trigger**.
    - Function: `processGmailAttachments`
    - Event source: Time-driven → e.g., **Daily** at your preferred hour.
 
-6. **Grant permissions:**
+7. **Grant permissions:**
    - On first run, Google will ask to authorize Gmail and Drive access. Review and approve.
 
 ---
@@ -103,22 +147,32 @@ const CONFIG = {
 
 ```
 gmail-cleanup-scripts/
-├── cleanup-attachments.gs   # Main Apps Script (deploy to Google Apps Script)
-├── jsconfig.json            # VS Code / editor type-checking config
+├── cleanup-attachments.gs     # Main Apps Script — the only file deployed to GAS
+├── appsscript.json            # GAS project manifest (runtime, OAuth scopes, timezone)
+├── .clasp.json.template       # clasp config template — copy to .clasp.json & fill Script ID
+├── .clasp.json                # ⛔ gitignored — your local credentials (never commit)
+├── .claspignore               # Files excluded from `clasp push`
+├── jsconfig.json              # VS Code type-checking config (GAS + ES2015)
+├── package.json               # npm scripts for clasp workflow
+├── CONTEXT.md                 # Persistent AI & contributor project context
 ├── tasks/
-│   ├── todo.md              # Active task backlog
-│   └── lessons.md           # Session lessons log
-└── README.md                # This file
+│   ├── todo.md                # Active task backlog
+│   └── lessons.md             # Append-only session lessons log
+└── README.md                  # This file
 ```
 
 ---
 
 ## 🔒 Permissions Required
 
+Scopes are declared in `appsscript.json` and requested automatically on first run:
+
 | Scope | Reason |
 |---|---|
-| `https://mail.google.com/` | Read threads, add labels, trash emails |
-| `https://www.googleapis.com/auth/drive` | Create folders and files in Drive |
+| `gmail.modify` | Read threads, add labels, trash emails |
+| `drive` | Create folders and files in Drive |
+| `script.external_request` | Reserved for future webhook/API calls |
+| `script.send_mail` | Send completion notification emails (upcoming feature) |
 
 ---
 

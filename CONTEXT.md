@@ -19,18 +19,23 @@ A **Google Apps Script** suite that keeps a Gmail inbox clean by:
 
 ```
 gmail-cleanup-scripts/
-├── cleanup-attachments.gs   ← ONLY deployable script (paste into GAS editor or push via clasp)
-├── jsconfig.json            ← VS Code type-checking; ES2015 + google-apps-script types
-├── .gitignore               ← excludes node_modules, .clasp.json (contains OAuth tokens!)
-├── CONTEXT.md               ← This file
-├── README.md                ← User-facing setup guide & config reference
+├── cleanup-attachments.gs     ← Main deployable script — pushed via clasp or manual paste
+├── appsscript.json            ← GAS manifest (runtime V8, OAuth scopes, timezone)
+├── .clasp.json.template       ← Safe template — copy to .clasp.json and fill Script ID
+├── .clasp.json                ← ⛔ gitignored — real credentials, never commit
+├── .claspignore               ← Files excluded from clasp push
+├── jsconfig.json              ← VS Code type-checking; *.gs + google-apps-script types
+├── package.json               ← npm scripts: push / pull / open / status / logs
+├── .gitignore                 ← excludes node_modules, .clasp.json
+├── CONTEXT.md                 ← This file
+├── README.md                  ← User-facing setup guide & config reference
 ├── tasks/
-│   ├── todo.md              ← Active backlog (High / Medium / Low / Done)
-│   └── lessons.md           ← Append-only session lessons log
-└── node_modules/            ← Editor tooling ONLY — never deployed to GAS
+│   ├── todo.md                ← Active backlog (High / Medium / Low / Done)
+│   └── lessons.md             ← Append-only session lessons log
+└── node_modules/              ← Editor tooling ONLY — never deployed to GAS
 ```
 
-**Deployment model**: No build step. `cleanup-attachments.gs` is a single flat file. Copy-paste into the [Google Apps Script editor](https://script.google.com) or push via `clasp` (not yet wired — see backlog).
+**Deployment model**: No build step. `cleanup-attachments.gs` is a single flat file. Primary workflow is **`npm run push`** via `clasp` (wired — Script ID configured). Manual copy-paste into the [Google Apps Script editor](https://script.google.com) remains as a fallback.
 
 ---
 
@@ -117,7 +122,7 @@ Gmail_Attachments_Archive/
 > Always check `tasks/todo.md` for the authoritative, up-to-date list.
 
 ### 🔴 High
-- [ ] `clasp` CLI integration
+- [x] `clasp` CLI integration — **DONE** (2026-06-07)
 - [ ] Unit-testable utility layer (`utils.gs` + Jest stubs)
 
 ### 🟡 Medium

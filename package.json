@@ -1,0 +1,36 @@
+{
+  "name": "gmail-cleanup-scripts",
+  "version": "1.0.0",
+  "description": "Google Apps Script suite to archive Gmail attachments to Drive and trash old emails.",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "push": "clasp push",
+    "pull": "clasp pull",
+    "open": "clasp open",
+    "status": "clasp status",
+    "logs": "clasp logs --watch",
+    "deploy": "clasp deploy --description \"$(node -e 'console.log(new Date().toISOString())') auto-deploy\"",
+    "undeploy": "clasp undeploy --all",
+    "push:dry": "clasp push --dry-run"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.3.0",
+    "@types/google-apps-script": "^1.0.92"
+  },
+  "keywords": [
+    "google-apps-script",
+    "gmail",
+    "drive",
+    "clasp",
+    "automation"
+  ],
+  "author": "GermanMF",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GermanMF/gmail-cleanup-scripts.git"
+  }
+}
