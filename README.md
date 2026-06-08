@@ -31,9 +31,11 @@ Gmail_Attachments_Archive/
 - **Configurable date windows** — tweak `ARCHIVE_AFTER_MONTHS` and `DELETE_AFTER_MONTHS` without touching any logic.
 - **Batch processing** — runs up to `BATCH_SIZE` (default 50) threads per execution to stay within Apps Script's 6-minute wall-clock limit.
 - **Duplicate prevention** — processed threads are tagged with a Gmail label (`Processed_Drive`) so they are never re-processed.
-- **Small file filtering** — inline signature images under 10 KB are skipped automatically.
-- **Comprehensive reporting** — `generateCleanupReport()` prints a rich snapshot to the Execution Log with mailbox stats, top senders, Drive archive state, and estimated runs remaining.
+- **Smart filtering** — inline signature images under 10 KB are skipped automatically. Exclude specific senders or domains via `EXCLUDED_SENDERS`.
+- **HTML Email Reports** — opt-in to receive beautifully styled summary emails (`ENABLE_HTML_REPORT`) after each run.
+- **Google Sheets Dashboard** — opt-in to automatically track run history and mailbox stats in a Google Sheet over time (`ENABLE_DASHBOARD`).
 - **One-time migration helpers** — two migration functions handle existing archives from older folder structures.
+- **Unit-testable Utility Layer** — pure functions are separated into `utils.gs` with 100% test coverage via local Jest tests.
 
 ---
 
@@ -51,6 +53,11 @@ const CONFIG = {
   ARCHIVE_AFTER_MONTHS: 3,                           // archive threshold
   DELETE_AFTER_MONTHS:  6,                           // delete threshold
   MAX_COUNT_PER_QUERY:  500,                         // report accuracy cap
+  EXCLUDED_SENDERS:     [],                          // senders/domains to ignore
+  ENABLE_HTML_REPORT:   false,                       // send styled email after run
+  REPORT_EMAIL:         '',                          // recipient (defaults to active user)
+  ENABLE_DASHBOARD:     false,                       // append stats to Google Sheets
+  DASHBOARD_SPREADSHEET_ID: '',                      // sheet ID (auto-created if empty)
 };
 ```
 
@@ -61,7 +68,9 @@ const CONFIG = {
 | Function | Description |
 |---|---|
 | `processGmailAttachments()` | **Main function** — run this manually or on a trigger |
-| `generateCleanupReport()` | Stats-only report, safe to run anytime |
+| `generateCleanupReport()` | Stats-only report (Execution Log), safe to run anytime |
+| `sendHtmlCleanupReport()` | Generates stats and emails an HTML summary |
+| `updateSpreadsheetDashboard()` | Appends current stats to a tracking Google Sheet |
 | `migrateOldStructure()` | Stage 1 migration: old `YYYY/MM_Month/` → `email@domain/YYYY/` |
 | `migrateEmailFoldersToDisplayName()` | Stage 2 migration: `email@domain/` → `DisplayName/email/` |
 
@@ -112,6 +121,7 @@ npm run open
 | `npm run status` | `clasp status` | Show which files differ |
 | `npm run logs` | `clasp logs --watch` | Tail live execution logs |
 | `npm run push:dry` | `clasp push --dry-run` | Preview files to be pushed |
+| `npm run test` | `jest --coverage` | Run local unit test suite |
 
 > ⚠️ Never commit `.clasp.json` — it is gitignored. Commit only `.clasp.json.template`.
 
@@ -147,13 +157,15 @@ npm run open
 
 ```
 gmail-cleanup-scripts/
-├── cleanup-attachments.gs     # Main Apps Script — the only file deployed to GAS
-├── appsscript.json            # GAS project manifest (runtime, OAuth scopes, timezone)
-├── .clasp.json.template       # clasp config template — copy to .clasp.json & fill Script ID
-├── .clasp.json                # ⛔ gitignored — your local credentials (never commit)
+├── cleanup-attachments.gs     # Main Apps Script — core logic and wrappers
+├── utils.gs                   # Pure utility functions (shared scope in GAS)
+├── __tests__/                 # Local Jest test suites
+│   └── utils.test.js          # 100% coverage tests for utils.gs
+├── appsscript.json            # GAS project manifest (runtime, OAuth scopes)
+├── .clasp.json.template       # clasp config template
 ├── .claspignore               # Files excluded from `clasp push`
-├── jsconfig.json              # VS Code type-checking config (GAS + ES2015)
-├── package.json               # npm scripts for clasp workflow
+├── jsconfig.json              # VS Code type-checking config (GAS + Jest)
+├── package.json               # npm scripts & Jest dependency
 ├── CONTEXT.md                 # Persistent AI & contributor project context
 ├── tasks/
 │   ├── todo.md                # Active task backlog
@@ -171,8 +183,9 @@ Scopes are declared in `appsscript.json` and requested automatically on first ru
 |---|---|
 | `gmail.modify` | Read threads, add labels, trash emails |
 | `drive` | Create folders and files in Drive |
+| `gmail.send` | Send HTML cleanup report emails |
+| `spreadsheets` | Update the historical tracking dashboard |
 | `script.external_request` | Reserved for future webhook/API calls |
-| `script.send_mail` | Send completion notification emails (upcoming feature) |
 
 ---
 

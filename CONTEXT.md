@@ -19,13 +19,16 @@ A **Google Apps Script** suite that keeps a Gmail inbox clean by:
 
 ```
 gmail-cleanup-scripts/
-├── cleanup-attachments.gs     ← Main deployable script — pushed via clasp or manual paste
+├── cleanup-attachments.gs     ← Main Apps Script — core logic and wrappers
+├── utils.gs                   ← Pure utility functions (shared scope in GAS)
+├── __tests__/                 ← Local Jest test suites
+│   └── utils.test.js          ← 100% coverage tests for utils.gs
 ├── appsscript.json            ← GAS manifest (runtime V8, OAuth scopes, timezone)
 ├── .clasp.json.template       ← Safe template — copy to .clasp.json and fill Script ID
 ├── .clasp.json                ← ⛔ gitignored — real credentials, never commit
 ├── .claspignore               ← Files excluded from clasp push
-├── jsconfig.json              ← VS Code type-checking; *.gs + google-apps-script types
-├── package.json               ← npm scripts: push / pull / open / status / logs
+├── jsconfig.json              ← VS Code type-checking; *.gs + google-apps-script + jest
+├── package.json               ← npm scripts + Jest configuration
 ├── .gitignore                 ← excludes node_modules, .clasp.json
 ├── CONTEXT.md                 ← This file
 ├── README.md                  ← User-facing setup guide & config reference
