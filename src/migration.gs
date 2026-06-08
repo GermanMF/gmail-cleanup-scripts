@@ -313,6 +313,8 @@ function removeDuplicatesInFolder(folder) {
     
     while (files.hasNext()) {
       const file = files.next();
+      if (file.isTrashed()) continue; // Evita procesar archivos que ya están en la papelera
+      
       const name = file.getName();
       
       if (seenNames.has(name)) {
