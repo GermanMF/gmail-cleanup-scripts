@@ -36,6 +36,15 @@ const CONFIG = {
    * Raise it if you have a very large mailbox and want accurate totals.
    */
   MAX_COUNT_PER_QUERY: 500,
+  /**
+   * List of senders to skip entirely during attachment archiving.
+   * Supports two formats:
+   *   - Exact email:  'newsletter@example.com'
+   *   - Full domain:  '@marketing.example.com'  (matches any address at that domain)
+   * Comparison is case-insensitive.
+   * @example ['noreply@spam.com', '@newsletters.co']
+   */
+  EXCLUDED_SENDERS: [],
 };
 
 // =============================================================================
@@ -524,6 +533,13 @@ function processMessage(message, baseFolder) {
     const date = message.getDate();
     const rawFrom = message.getFrom();
     const senderEmail = extractEmailAddress(rawFrom);
+
+    // ── Exclusion list check ────────────────────────────────────────────────
+    if (isSenderExcluded(senderEmail)) {
+      Logger.log(`  Skipped excluded sender: ${senderEmail}`);
+      return;
+    }
+
     const displayName = extractDisplayName(rawFrom);  // e.g. "G2A.com"
     const senderLocal = extractLocalPart(senderEmail); // e.g. "info"
 
@@ -536,7 +552,7 @@ function processMessage(message, baseFolder) {
       if (attachment.getSize() > CONFIG.MIN_FILE_SIZE_BYTES) {
         saveAttachment(attachment, date, senderLocal, yearFolder);
       } else {
-        Logger.log(`Skipped small attachment (<10KB): ${attachment.getName()}`);
+        Logger.log(`  Skipped small attachment (<10KB): ${attachment.getName()}`);
       }
     });
   } catch (error) {
@@ -546,6 +562,8 @@ function processMessage(message, baseFolder) {
 
 /**
  * Saves a single attachment to Drive with the configured naming convention.
+ * Skips the file if an identically-named file already exists in the target folder
+ * to prevent duplicates when re-processing a thread (e.g. after label removal).
  * @param {GoogleAppsScript.Gmail.GmailAttachment} attachment Blob to save.
  * @param {Date} date Email received date.
  * @param {string} senderLocal Local part of sender's email (before the @).
@@ -559,6 +577,13 @@ function saveAttachment(attachment, date, senderLocal, targetFolder) {
     const extension = dotIndex !== -1 ? originalName.substring(dotIndex) : '';
 
     const finalName = `${getDateString(date)}_${sanitizeFilename(senderLocal)}_${sanitizeFilename(nameWithoutExt)}${extension}`;
+
+    // ── Deduplication check ─────────────────────────────────────────────────
+    if (fileExistsInFolder(targetFolder, finalName)) {
+      Logger.log(`  Skipped duplicate: ${finalName}`);
+      return;
+    }
+
     targetFolder.createFile(attachment).setName(finalName);
     Logger.log(`  Saved: ${finalName}`);
   } catch (error) {
@@ -637,6 +662,37 @@ function parseOldFilename(filename) {
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
+
+/**
+ * Checks whether a sender's email address matches any rule in CONFIG.EXCLUDED_SENDERS.
+ * Supports two rule formats:
+ *   - Exact match:   'newsletter@example.com'
+ *   - Domain match:  '@example.com'  (matches any address at that domain)
+ * Comparison is case-insensitive.
+ * @param {string} senderEmail Normalised sender email address.
+ * @returns {boolean} True if the sender should be skipped.
+ */
+function isSenderExcluded(senderEmail) {
+  if (!CONFIG.EXCLUDED_SENDERS || CONFIG.EXCLUDED_SENDERS.length === 0) return false;
+  const email = senderEmail.toLowerCase();
+  return CONFIG.EXCLUDED_SENDERS.some(function (rule) {
+    const r = rule.toLowerCase().trim();
+    // Domain rule starts with '@' — match anything ending in that domain
+    return r.startsWith('@') ? email.endsWith(r) : email === r;
+  });
+}
+
+/**
+ * Checks whether a file with the given name already exists in a Drive folder.
+ * Used by saveAttachment() to prevent re-saving duplicate files.
+ * This call is read-only and has no side effects.
+ * @param {GoogleAppsScript.Drive.Folder} folder Drive folder to search.
+ * @param {string} fileName Exact file name to look for.
+ * @returns {boolean} True if at least one file with that name exists.
+ */
+function fileExistsInFolder(folder, fileName) {
+  return folder.getFilesByName(fileName).hasNext();
+}
 
 /**
  * Gets or creates a Gmail label by name.

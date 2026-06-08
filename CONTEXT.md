@@ -102,6 +102,8 @@ Gmail_Attachments_Archive/
 | `getOrCreateLabel / getOrCreateFolder` | Idempotent — safe to call repeatedly |
 | `sanitizeFilename` | Replaces `/ \ : * ? " < > |` and spaces with `_` |
 | `computeThresholdDate(months)` | ⚠️ UTC-sensitive — see Gotchas |
+| `isSenderExcluded(email)` | Checks email against `CONFIG.EXCLUDED_SENDERS` (exact or `@domain`) |
+| `fileExistsInFolder(folder, name)` | Read-only dedup check before `createFile` |
 
 ---
 
@@ -113,7 +115,8 @@ Gmail_Attachments_Archive/
 4. **`addFile`/`removeFile` is a reference move** — not a copy. Mid-migration failure can leave a file with two parents temporarily.
 5. **Logger is ephemeral** — output disappears after execution. For audits, write to a Sheet or send via `MailApp`.
 6. **`.clasp.json` contains OAuth tokens** — already in `.gitignore`, but double-check before every commit.
-7. **No dedup on `saveAttachment`** — the `Processed_Drive` label is the only guard. If the label is removed, files can be re-saved.
+7. **No dedup on `saveAttachment`** — ~~the `Processed_Drive` label is the only guard~~ **fixed**: `fileExistsInFolder()` checks by filename before `createFile`. Still, if the filename changes (e.g. due to a date bug), a second copy can appear.
+8. **`EXCLUDED_SENDERS` domain match uses `endsWith`** — `'@foo.com'` matches `bar@foo.com` but also `baz@sub.foo.com`. Use the full subdomain (`'@sub.foo.com'`) if you want a narrower match.
 
 ---
 
@@ -126,10 +129,10 @@ Gmail_Attachments_Archive/
 - [ ] Unit-testable utility layer (`utils.gs` + Jest stubs)
 
 ### 🟡 Medium
+- [x] Attachment deduplication (`fileExistsInFolder`) — **DONE** (2026-06-07)
+- [x] Configurable sender exclusion list (`EXCLUDED_SENDERS` + `isSenderExcluded`) — **DONE** (2026-06-07)
 - [ ] Email notification on batch completion (`MailApp`)
 - [ ] Dry-run mode (`DRY_RUN` config flag)
-- [ ] Attachment deduplication before `createFile`
-- [ ] Configurable sender exclusion list
 
 ### 🟢 Low
 - [ ] HTML email report
