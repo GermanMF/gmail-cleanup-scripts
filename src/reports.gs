@@ -608,4 +608,118 @@ function getOrCreateDashboard() {
 // extractDisplayName, extractLocalPart, pad, getDateString, getYearString,
 // formatDateForQuery, computeThresholdDate, parseOldFilename) live in utils.gs.
 // GAS loads both files in the same scope, so they are available here automatically.
-// For unit tests, see __tests__/utils.test.js.
+// For unit tests, see __tests__/utils.test.js.
+
+/**
+ * Sends a compact HTML summary email at the end of a processGmailAttachments() run.
+ * Unlike sendHtmlCleanupReport(), this function makes NO extra Gmail queries —
+ * it only reports the counters already gathered by the main batch loop.
+ * Opt-in via CONFIG.ENABLE_BATCH_NOTIFICATION = true.
+ * Recipient: CONFIG.REPORT_EMAIL or the running account.
+ *
+ * @param {number} archivedCount Threads archived and labelled (kept in Gmail).
+ * @param {number} deletedCount  Threads archived and moved to Trash.
+ * @param {number} skippedCount  Threads skipped (dry-run or excluded sender).
+ * @param {number} startTime     Date.now() timestamp from the start of the run.
+ */
+function sendBatchCompletionNotification(archivedCount, deletedCount, skippedCount, startTime) {
+  try {
+    const recipient = CONFIG.REPORT_EMAIL || Session.getActiveUser().getEmail();
+    if (!recipient) {
+      Logger.log('sendBatchCompletionNotification: No recipient email found. Set CONFIG.REPORT_EMAIL.');
+      return;
+    }
+
+    const now         = new Date();
+    const dateStr     = now.toISOString().substring(0, 10);
+    const timeStr     = now.toTimeString().substring(0, 5);
+    const elapsedSec  = ((Date.now() - startTime) / 1000).toFixed(1);
+    const isDryRun    = !!CONFIG.DRY_RUN;
+    const modeLabel   = isDryRun ? '⚠️ DRY RUN — no changes were made' : '✅ Live run — changes applied';
+    const modeColor   = isDryRun ? '#e65100' : '#2e7d32';
+    const modeBg      = isDryRun ? '#fff3e0' : '#e8f5e9';
+    const headerColor = isDryRun ? '#e65100' : '#1a73e8';
+
+    const subject = isDryRun
+      ? `[DRY RUN] Gmail Cleanup batch complete — ${dateStr}`
+      : `✅ Gmail Cleanup batch complete — ${dateStr}`;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Gmail Cleanup Notification</title></head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#333;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0f4f8;padding:24px 0;">
+<tr><td align="center">
+<table width="520" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;width:100%;">
+
+  <!-- HEADER -->
+  <tr><td style="background:${headerColor};padding:28px 28px 20px;border-radius:12px 12px 0 0;">
+    <div style="font-size:22px;font-weight:700;color:#fff;">📬 Gmail Cleanup</div>
+    <div style="font-size:13px;color:rgba(255,255,255,0.82);margin-top:5px;">Batch Complete &nbsp;·&nbsp; ${dateStr} at ${timeStr}</div>
+  </td></tr>
+
+  <!-- BODY -->
+  <tr><td style="background:#fff;padding:28px;border-radius:0 0 12px 12px;box-shadow:0 4px 20px rgba(0,0,0,0.07);">
+
+    <!-- MODE BANNER -->
+    <table width="100%" cellpadding="10" cellspacing="0" border="0" style="background:${modeBg};border-radius:8px;margin-bottom:24px;">
+    <tr><td style="font-size:13px;font-weight:700;color:${modeColor};text-align:center;">${modeLabel}</td></tr>
+    </table>
+
+    <!-- STAT CARDS -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+    <tr>
+      <td width="33%" style="padding-right:6px;">
+        <table width="100%" cellpadding="14" cellspacing="0" style="background:#e8f5e9;border-radius:10px;text-align:center;">
+        <tr><td>
+          <div style="font-size:38px;font-weight:800;color:#2e7d32;line-height:1;">${archivedCount}</div>
+          <div style="font-size:10px;color:#558b2f;text-transform:uppercase;letter-spacing:0.6px;margin-top:5px;font-weight:700;">Archived &amp; Kept</div>
+        </td></tr></table>
+      </td>
+      <td width="33%" style="padding:0 3px;">
+        <table width="100%" cellpadding="14" cellspacing="0" style="background:#fce4ec;border-radius:10px;text-align:center;">
+        <tr><td>
+          <div style="font-size:38px;font-weight:800;color:#c62828;line-height:1;">${deletedCount}</div>
+          <div style="font-size:10px;color:#ad1457;text-transform:uppercase;letter-spacing:0.6px;margin-top:5px;font-weight:700;">Archived &amp; Deleted</div>
+        </td></tr></table>
+      </td>
+      <td width="33%" style="padding-left:6px;">
+        <table width="100%" cellpadding="14" cellspacing="0" style="background:#fff8e1;border-radius:10px;text-align:center;">
+        <tr><td>
+          <div style="font-size:38px;font-weight:800;color:#e65100;line-height:1;">${skippedCount}</div>
+          <div style="font-size:10px;color:#bf360c;text-transform:uppercase;letter-spacing:0.6px;margin-top:5px;font-weight:700;">${isDryRun ? 'Dry-Run Skipped' : 'Skipped'}</div>
+        </td></tr></table>
+      </td>
+    </tr>
+    </table>
+
+    <!-- TIMING -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#555;margin-bottom:20px;">
+      <tr>
+        <td style="padding:9px 10px;border-bottom:1px solid #f0f0f0;">⏱ Execution time</td>
+        <td style="padding:9px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${elapsedSec}s</td>
+      </tr>
+      <tr>
+        <td style="padding:9px 10px;">📦 Batch size</td>
+        <td style="padding:9px 10px;text-align:right;font-weight:700;">${CONFIG.BATCH_SIZE} threads</td>
+      </tr>
+    </table>
+
+    <!-- FOOTER -->
+    <div style="border-top:1px solid #eee;padding-top:14px;font-size:11px;color:#bbb;text-align:center;">
+      Gmail Cleanup Scripts &nbsp;·&nbsp; ${dateStr} ${timeStr} &nbsp;·&nbsp; Google Apps Script
+    </div>
+
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+
+    MailApp.sendEmail({ to: recipient, subject: subject, htmlBody: html });
+    Logger.log(`Batch notification sent to: ${recipient}`);
+  } catch (error) {
+    Logger.log(`sendBatchCompletionNotification error: ${error}`);
+  }
+}

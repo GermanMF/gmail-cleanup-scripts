@@ -14,6 +14,11 @@
 function processGmailAttachments() {
   try {
     const startTime = Date.now();
+
+    if (CONFIG.DRY_RUN) {
+      Logger.log('⚠️  DRY RUN MODE ENABLED — no files will be saved, no emails will be trashed or labelled.');
+    }
+
     const label = getOrCreateLabel(CONFIG.PROCESSED_LABEL);
     const archiveDate = computeThresholdDate(CONFIG.ARCHIVE_AFTER_MONTHS); // 3 months ago
     const deleteDate = computeThresholdDate(CONFIG.DELETE_AFTER_MONTHS);  // 6 months ago
@@ -39,6 +44,7 @@ function processGmailAttachments() {
 
     let archivedCount = 0;
     let deletedCount = 0;
+    let skippedCount = 0;
 
     for (let i = 0; i < threads.length; i++) {
       const thread = threads[i];
@@ -61,19 +67,33 @@ function processGmailAttachments() {
 
         if (threadIsOld) {
           // Archive done — now delete from Gmail
-          thread.moveToTrash();
-          Logger.log(`  Trashed thread (newest msg: ${newestMessage.getDate().toISOString().substring(0, 10)})`);
-          deletedCount++;
+          if (CONFIG.DRY_RUN) {
+            Logger.log(`  [DRY RUN] Would trash thread (newest msg: ${newestMessage.getDate().toISOString().substring(0, 10)})`);
+            skippedCount++;
+          } else {
+            thread.moveToTrash();
+            Logger.log(`  Trashed thread (newest msg: ${newestMessage.getDate().toISOString().substring(0, 10)})`);
+            deletedCount++;
+          }
         } else {
           // Archive done — keep in Gmail but mark as processed
-          thread.addLabel(label);
-          archivedCount++;
+          if (CONFIG.DRY_RUN) {
+            Logger.log(`  [DRY RUN] Would apply label '${CONFIG.PROCESSED_LABEL}' to thread`);
+            skippedCount++;
+          } else {
+            thread.addLabel(label);
+            archivedCount++;
+          }
         }
       } catch (threadError) {
         Logger.log(`Error handling thread ${thread.getId()}: ${threadError}`);
       }
     }
-    Logger.log(`\n✅  Batch done — Archived & kept: ${archivedCount} | Archived & deleted: ${deletedCount}\n`);
+    Logger.log(`\n✅  Batch done — Archived & kept: ${archivedCount} | Archived & deleted: ${deletedCount} | Dry-run skipped: ${skippedCount}\n`);
+
+    if (CONFIG.ENABLE_BATCH_NOTIFICATION) {
+      sendBatchCompletionNotification(archivedCount, deletedCount, skippedCount, startTime);
+    }
 
   } catch (error) {
     Logger.log(`Critical error in processGmailAttachments: ${error}`);
@@ -164,8 +184,12 @@ function saveAttachment(attachment, date, senderLocal, targetFolder) {
       return;
     }
 
-    targetFolder.createFile(attachment).setName(finalName);
-    Logger.log(`  Saved: ${finalName}`);
+    if (CONFIG.DRY_RUN) {
+      Logger.log(`  [DRY RUN] Would save: ${finalName} → ${targetFolder.getName()}`);
+    } else {
+      targetFolder.createFile(attachment).setName(finalName);
+      Logger.log(`  Saved: ${finalName}`);
+    }
   } catch (error) {
     Logger.log(`Error saving attachment "${attachment.getName()}": ${error}`);
   }

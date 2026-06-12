@@ -83,28 +83,234 @@ const CONFIG = {
     '@mercadopago.com.mx': 'Mercado Pago',
     '@telcel.com': 'Telcel',
     '@cfe.mx': 'CFE',
+    '@cfecontigo.com.mx': 'CFE',
     '@banamex.com': 'Banamex',
+    '@citibanamex.com': 'Citibanamex',
+    '@notificaciones.afore.banamex.com': 'Citibanamex',
     '@bbva.com': 'BBVA',
+    '@bbva.com.mx': 'BBVA',
     '@santander.com.mx': 'Santander',
+    '@infonavit.gob.mx': 'Infonavit',
+    '@imss.gob.mx': 'IMSS',
+    '@serviciosdigitales.imss.gob.mx': 'IMSS',
+    '@sat.gob.mx': 'SAT',
+    '@etn.com.mx': 'ETN',
+    '@primeraplus.com.mx': 'Primera Plus',
+    '@autovias.com.mx': 'Autovias',
+    '@unicef.org': 'Unicef',
+    '@recibosunicef.org': 'Unicef',
+    '@axtel.com.mx': 'AXTEL',
+    '@aeromexico.com': 'Aeromexico',
+    '@volaris.com': 'Volaris',
   },
   /**
-   * Rules for intelligent filtering. Each category is checked in order.
-   * A file/email matches a category if it contains any of the keywords in the
-   * subject, filename, or sender domain/email.
+   * Rules for intelligent filtering. Each category is checked in order — MOST
+   * SPECIFIC FIRST to prevent a broad keyword swallowing a narrow one.
+   *
+   * A file/email matches a category if any keyword appears in the subject,
+   * filename, OR sender domain/email (all case-insensitive).
    */
   CATEGORIES: [
-    { name: 'Facturas', keywords: ['factura', 'invoice', 'recibo', 'receipt', 'comprobante', 'xml'] },
-    { name: 'Estados de Cuenta', keywords: ['estado de cuenta', 'account statement', 'statement'] },
-    { name: 'Tickets_Viajes', keywords: ['ticket', 'vuelo', 'reservacion', 'itinerary', 'boleto', 'aeromexico', 'volaris', 'vivaaerobus', 'uber', 'didi'] },
-    { name: 'Contrasenas', keywords: ['password', 'contraseña', 'reset', 'recovery', 'security code', 'codigo', 'verificacion'] },
-    { name: 'Marketing', keywords: ['newsletter', 'promocion', 'oferta', 'descuento', 'sale'] },
-    { name: 'Hipoteca', keywords: ['hipoteca', 'mortgage', 'infonavit'] },
-    { name: 'Importantes', keywords: ['importante', 'urgent', 'aviso', 'notificacion'] },
-    { name: 'Personales', keywords: ['personal', 'family', 'amigo'] }
+    /**
+     * AFORE / Retirement savings — checked before Hipoteca & Importantes
+     * because both of those have 'infonavit'/'aviso' keywords that would
+     * otherwise swallow afore documents.
+     */
+    {
+      name: 'Afore',
+      keywords: [
+        'afore', 'sar', 'ahorro retiro', 'pension', 'cuenta individual',
+        'estado de cuenta afore', 'localizaafore', 'consultatuafore',
+        'aforemovil', 'appsar', 'portalsar',
+      ],
+    },
+    /**
+     * Mortgage — before Gobierno so 'infonavit' avalúo docs stay here.
+     */
+    {
+      name: 'Hipoteca',
+      keywords: [
+        'hipoteca', 'mortgage', 'avaluo', 'credito infonavit', 'infonavit',
+        'amortizacion', 'escritura',
+      ],
+    },
+    /**
+     * Government transactions & IDs — SAT, IMSS, SRE, gob.mx portals.
+     * Checked before Facturas so government receipts ('pago', 'comprobante')
+     * don't land in the invoice bucket.
+     */
+    {
+      name: 'Gobierno',
+      keywords: [
+        'sat', 'imss', 'nss', 'numero de seguridad social',
+        'buzon tributario', 'buzontributario', 'serviciosalcontribuyente',
+        'contribuyente', 'gob.mx', 'sep', 'sre', 'pasaporte',
+        'acta de nacimiento', 'cedula profesional', 'tramite gobierno',
+        'gobierno de la ciudad', 'gobierno del estado',
+        'serviciosdigitales', 'comprobante vigencia',
+        'comprobante localizacion',
+      ],
+    },
+    /**
+     * Donations — before Facturas since donation receipts contain 'recibo'.
+     */
+    {
+      name: 'Donaciones',
+      keywords: [
+        'unicef', 'donacion', 'donativos', 'donativo', 'recibos unicef',
+        'donacionesmexico',
+      ],
+    },
+    /**
+     * Utility bills (CFE, internet, phone) — before Facturas so utility
+     * PDFs ('fac*', 'recibo') stay in a dedicated bucket.
+     */
+    {
+      name: 'Servicios',
+      keywords: [
+        'cfe', 'luz', 'recibo de luz',
+        'axtel', 'servicioaclientes axtel', 'ftth',
+        'telcel', 'facturacion telcel',
+        'megacable', 'telmex', 'totalplay', 'izzi',
+        'internet', 'telefonia', 'cable',
+      ],
+    },
+    /**
+     * Bank statements — before generic Facturas.
+     */
+    {
+      name: 'Estados de Cuenta',
+      keywords: [
+        'estado de cuenta', 'account statement', 'edos',
+        'resumen de movimientos', 'resumen movimientos',
+        'tu estado de cuenta',
+      ],
+    },
+    /**
+     * Invoices & fiscal receipts (CFDI).
+     */
+    {
+      name: 'Facturas',
+      keywords: [
+        'factura', 'invoice', 'recibo', 'receipt', 'comprobante',
+        'cfdi', 'xml', 'comprobante de compra', 'comprobante de pago',
+        'comprobante fiscal', 'nota de venta',
+      ],
+    },
+    /**
+     * Transport — ride-hailing, buses, airlines, tolls.
+     * Renamed from Tickets_Viajes; old folder name kept in migration compat.
+     */
+    {
+      name: 'Transporte',
+      keywords: [
+        'uber', 'didi', 'bolt', 'taxify', 'cabify',
+        'etn', 'primera plus', 'futura', 'chihuahuenses', 'odm',
+        'autovias', 'peaje',
+        'aeromexico', 'volaris', 'vivaaerobus', 'vuelo', 'aerolinea',
+        'boleto', 'itinerary', 'itinerario', 'reservacion', 'reserva de viaje',
+        'pase de abordar', 'boarding pass',
+        'confirmacion de viaje', 'confirmaciondeviaje',
+        'axa-assistance', 'viajasistencia',
+      ],
+    },
+    /**
+     * Cinema & entertainment.
+     */
+    {
+      name: 'Entretenimiento',
+      keywords: [
+        'cine', 'cinepolis', 'cinemex', 'cineticket', 'pelicula',
+        'concierto', 'evento', 'smart-ticket',
+      ],
+    },
+    /**
+     * Employment & CV documents — job offers, HR onboarding, residencias.
+     */
+    {
+      name: 'Trabajo',
+      keywords: [
+        'curriculum', ' cv ', 'empleo', 'oferta laboral',
+        'propuesta economica', 'carta pasante', 'residencia profesional',
+        'reclutamiento', 'onboarding', 'benefits', 'nomina', 'nomina',
+        'softtek', 'astrazeneca', 'workday', 'intel hiring',
+        'aviso de privacidad laboral',
+      ],
+    },
+    /**
+     * School / university documents.
+     */
+    {
+      name: 'Escolar',
+      keywords: [
+        'tarea', 'calificaciones', 'egreso', 'titulacion', 'titulación',
+        'servicios escolares', 'residencias', 'posgrado', 'maestria',
+        'academico', 'instituto tecnologico', 'itm', 'seguimiento academico',
+        'convocatoria', 'certificado', 'cedula', 'tramite escolar',
+      ],
+    },
+    /**
+     * Security & account recovery — tightened to avoid catching newsletters.
+     */
+    {
+      name: 'Contrasenas',
+      keywords: [
+        'password', 'contraseña', 'reset password', 'account recovery',
+        'security code', 'codigo de verificacion', 'two-factor', '2fa',
+        'verification code', 'restablecer',
+      ],
+    },
+    /**
+     * Marketing & promotions.
+     */
+    {
+      name: 'Marketing',
+      keywords: [
+        'newsletter', 'promocion', 'promo', 'oferta', 'descuento',
+        'sale', 'publicidad', 'cupones', 'boletin',
+      ],
+    },
+    /**
+     * Important notices & legal.
+     */
+    {
+      name: 'Importantes',
+      keywords: [
+        'importante', 'urgente', 'urgent', 'aviso de privacidad',
+        'notificacion legal', 'contrato', 'poliza', 'seguro medico',
+        'accidente', 'atencion medica',
+      ],
+    },
+    /**
+     * Personal / family.
+     */
+    {
+      name: 'Personales',
+      keywords: [
+        'personal', 'family', 'amigo', 'foto', 'bautizo', 'familiar',
+      ],
+    },
   ],
   /**
-   * Default category for emails that don't match any rules.
+   * Default category for emails that don't match any rules above.
    */
   DEFAULT_CATEGORY: 'Otros',
+  /**
+   * When true, NO writes are made to Drive or Gmail.
+   * Every operation that would create, move, label, or trash is logged as
+   * "[DRY RUN] Would <action>: <target>" instead of executing.
+   * Safe to toggle on for a test run against your real mailbox.
+   * @type {boolean}
+   */
+  DRY_RUN: false,
+  /**
+   * When true, sends a compact HTML summary email at the end of each
+   * processGmailAttachments() run — archived count, deleted count, skipped
+   * count, execution time, and next-run suggestion.
+   * Uses REPORT_EMAIL as the recipient (falls back to the running account).
+   * Requires the gmail.send OAuth scope (already in appsscript.json).
+   * @type {boolean}
+   */
+  ENABLE_BATCH_NOTIFICATION: false,
 };
 

@@ -2,7 +2,7 @@
 
 > **Read this first.** Persistent AI and contributor context for the `gmail-cleanup-scripts` repository.
 > Keep this file updated whenever the architecture, scope, or major decisions change.
-> Last updated: 2026-06-07
+> Last updated: 2026-06-12
 
 ---
 
@@ -54,6 +54,16 @@ gmail-cleanup-scripts/
 | `ARCHIVE_AFTER_MONTHS` | `3` | Emails older than this are eligible to archive |
 | `DELETE_AFTER_MONTHS` | `6` | Emails older than this are also trashed after archiving |
 | `MAX_COUNT_PER_QUERY` | `500` | Safety cap for `countThreads` pagination |
+| `EXCLUDED_SENDERS` | `[]` | Skip exact emails or full domains (e.g. `'@domain.com'`) |
+| `SENDER_ALIASES` | `{...}` | Map email/domain → friendly display name for Drive folders |
+| `CATEGORIES` | `[...]` | Ordered keyword rules for intelligent Drive categorization |
+| `DEFAULT_CATEGORY` | `'Otros'` | Fallback category when no rule matches |
+| `ENABLE_HTML_REPORT` | `false` | Send full HTML report email after run |
+| `REPORT_EMAIL` | `''` | Recipient for HTML/notification emails (defaults to running account) |
+| `ENABLE_DASHBOARD` | `false` | Append run stats to a Google Sheets dashboard |
+| `DASHBOARD_SPREADSHEET_ID` | `''` | Spreadsheet ID for the dashboard (auto-created on first run) |
+| `DRY_RUN` | `false` | When `true`, log planned actions without writing to Drive or Gmail |
+| `ENABLE_BATCH_NOTIFICATION` | `false` | Send compact HTML summary email at end of each batch run |
 
 ---
 
@@ -103,12 +113,13 @@ Gmail_Attachments_Archive/
 | `getDriveArchiveStats()` | Walks Drive tree 3 levels deep |
 | `processThread → processMessage → saveAttachment` | Archival pipeline |
 | `getOrCreateLabel / getOrCreateFolder` | Idempotent — safe to call repeatedly |
-| `sanitizeFilename` | Replaces `/ \ : * ? " < > |` and spaces with `_` |
+| `sanitizeFilename` | Replaces `/ \ : * ? " < > \|` and spaces with `_` |
 | `computeThresholdDate(months)` | ⚠️ UTC-sensitive — see Gotchas |
 | `isSenderExcluded(email)` | Checks email against `CONFIG.EXCLUDED_SENDERS` (exact or `@domain`) |
 | `fileExistsInFolder(folder, name)` | Read-only dedup check before `createFile` |
 | `collectCleanupStats()` | Shared stat collector for HTML report + dashboard |
-| `sendHtmlCleanupReport(title?, batch?)` | Sends styled HTML email via `MailApp` |
+| `sendHtmlCleanupReport(title?, batch?)` | Sends full styled HTML email via `MailApp` |
+| `sendBatchCompletionNotification(archived, deleted, skipped, startTime)` | Compact HTML batch-end notification — no extra Gmail queries |
 | `buildHtmlReportBody(title, stats, batch)` | Builds email-safe table-based HTML string |
 | `updateSpreadsheetDashboard(batch?)` | Appends to Run History + refreshes Summary sheet |
 | `getOrCreateDashboard()` | Idempotent — creates spreadsheet + sheets on first run |
@@ -139,8 +150,8 @@ Gmail_Attachments_Archive/
 ### 🟡 Medium
 - [x] Attachment deduplication (`fileExistsInFolder`) — **DONE** (2026-06-07)
 - [x] Configurable sender exclusion list (`EXCLUDED_SENDERS` + `isSenderExcluded`) — **DONE** (2026-06-07)
-- [ ] Email notification on batch completion (`MailApp`)
-- [ ] Dry-run mode (`DRY_RUN` config flag)
+- [x] Email notification on batch completion (`sendBatchCompletionNotification`) — **DONE** (2026-06-12)
+- [x] Dry-run mode (`DRY_RUN` config flag) — **DONE** (2026-06-12)
 
 ### 🟢 Low
 - [x] HTML email report (`sendHtmlCleanupReport` + `buildHtmlReportBody`) — **DONE** (2026-06-07)

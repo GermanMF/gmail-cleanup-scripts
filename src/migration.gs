@@ -51,9 +51,13 @@ function migrateEmailFoldersToDisplayName() {
           const file = filesToMove[i];
           if (file.isTrashed()) continue;
           try {
-            newYearFolder.addFile(file);
-            yearFolder.removeFile(file);
-            Logger.log(`  Moved: ${file.getName()} -> ${displayName}/${emailAddress}/${yearFolder.getName()}/`);
+            if (CONFIG.DRY_RUN) {
+              Logger.log(`  [DRY RUN] Would move: ${file.getName()} -> ${displayName}/${emailAddress}/${yearFolder.getName()}/`);
+            } else {
+              newYearFolder.addFile(file);
+              yearFolder.removeFile(file);
+              Logger.log(`  Moved: ${file.getName()} -> ${displayName}/${emailAddress}/${yearFolder.getName()}/`);
+            }
             movedCount++;
           } catch (fileError) {
             Logger.log(`  Error moving file "${file.getName()}": ${fileError}`);
@@ -180,11 +184,14 @@ function migrateFile(file, baseFolder) {
 
     // Move file by adding it to new parent and removing from old parent
     const oldParent = file.getParents().next();
-    yearFolder.addFile(file);
-    oldParent.removeFile(file);
-    file.setName(newName);
-
-    Logger.log(`  -> ${senderEmail}/${year}/${newName}`);
+    if (CONFIG.DRY_RUN) {
+      Logger.log(`  [DRY RUN] Would move: ${currentName} -> ${senderEmail}/${year}/${newName}`);
+    } else {
+      yearFolder.addFile(file);
+      oldParent.removeFile(file);
+      file.setName(newName);
+      Logger.log(`  -> ${senderEmail}/${year}/${newName}`);
+    }
     return true;
   } catch (error) {
     Logger.log(`  Error migrating file "${file.getName()}": ${error}`);
@@ -196,90 +203,196 @@ function migrateFile(file, baseFolder) {
 /**
  * STAGE 3 MIGRATION — Intelligent Categorization
  * Reorganizes existing files into the new Category / FriendlyName / YYYY structure.
+ *
+ * Handles BOTH source structures:
+ *   OLD: DisplayName / email@domain.com / YYYY / files  (pre-Stage-3)
+ *   NEW: Category    / FriendlyName    / YYYY / files  (post-Stage-3, re-categorization)
+ *
+ * Run repeatedly until it reports 0 files moved — each run processes as many
+ * files as possible within the 4.5-minute GAS time budget.
  */
 function migrateToIntelligentCategories() {
+  const startTime = Date.now();
+  const TIME_LIMIT_MS = 4.5 * 60 * 1000;
+
   try {
     const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
-    const categoryFolders = baseFolder.getFolders(); // these might be the old "DisplayName" folders
+    const categoryFolders = baseFolder.getFolders();
+
     let migratedCount = 0;
-    let errorCount = 0;
+    let skippedCount  = 0;
+    let dupCount      = 0;
+    let errorCount    = 0;
+    let timedOut      = false;
+
+    Logger.log('=== Stage 3 Migration START ===');
+    if (CONFIG.DRY_RUN) {
+      Logger.log('⚠️  DRY RUN MODE ENABLED — no files will be moved or trashed.');
+    }
+    Logger.log('(Only moves and errors are logged — silent skips mean the file is already correct)');
 
     while (categoryFolders.hasNext()) {
-      const topFolder = categoryFolders.next();
+      const topFolder     = categoryFolders.next();
+      const topFolderName = topFolder.getName();
 
       const subFolders = topFolder.getFolders();
       while (subFolders.hasNext()) {
-        const subFolder = subFolders.next();
-        const yearFolders = subFolder.getFolders();
+        const subFolder     = subFolders.next();
+        const subFolderName = subFolder.getName();
 
+        const yearFolders = subFolder.getFolders();
         while (yearFolders.hasNext()) {
-          const yearFolder = yearFolders.next();
-          const filesIter = yearFolder.getFiles();
+          const yearFolder     = yearFolders.next();
+          const yearFolderName = yearFolder.getName();
+
+          const filesIter      = yearFolder.getFiles();
           const filesToMigrate = [];
-          
           while (filesIter.hasNext()) {
             filesToMigrate.push(filesIter.next());
           }
-          
+          if (filesToMigrate.length === 0) continue;
+
           for (let i = 0; i < filesToMigrate.length; i++) {
+            if (Date.now() - startTime > TIME_LIMIT_MS) {
+              Logger.log(`⏱  Time limit reached inside ${topFolderName}/${subFolderName}/${yearFolderName}. Stopping safely.`);
+              timedOut = true;
+              break;
+            }
+
             const file = filesToMigrate[i];
-            if (file.isTrashed()) continue;
-            const success = migrateFileToCategory(file, baseFolder);
-            if (success) migratedCount++;
-            else errorCount++;
+            if (file.isTrashed()) { skippedCount++; continue; }
+
+            const result = migrateFileToCategory(file, baseFolder);
+            if (result === 'moved')     migratedCount++;
+            else if (result === 'dup')  dupCount++;
+            else if (result === 'skip') skippedCount++;
+            else                        errorCount++;
           }
+
+          if (timedOut) break;
         }
+        if (timedOut) break;
       }
+      if (timedOut) break;
     }
 
-    Logger.log(`Stage 3 migration complete. Migrated: ${migratedCount} | Errors: ${errorCount}`);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    Logger.log('');
+    Logger.log('=== Stage 3 Migration SUMMARY ===');
+    Logger.log(`  Elapsed      : ${elapsed}s`);
+    Logger.log(`  Moved        : ${migratedCount}`);
+    Logger.log(`  Duplicates   : ${dupCount} (trashed)`);
+    Logger.log(`  Skipped      : ${skippedCount} (already correct or trashed)`);
+    Logger.log(`  Errors       : ${errorCount}`);
+
+    if (timedOut) {
+      Logger.log('');
+      Logger.log('⚠️  Time limit hit — run migrateToIntelligentCategories() again to continue.');
+    } else {
+      if (migratedCount === 0) {
+        Logger.log('✅ 0 files moved. Migration is complete!');
+      } else {
+        Logger.log('✅ All folders processed. Files were moved — run again to re-check.');
+      }
+    }
   } catch (error) {
     Logger.log(`Critical error in migrateToIntelligentCategories: ${error}`);
   }
 }
 
 /**
- * Moves a file to the new Category / FriendlyName / YYYY hierarchy.
+ * Moves a file to the correct Category / FriendlyName / YYYY location.
+ * Detects which folder structure the file currently lives in:
+ *
+ *   OLD structure: DisplayName / email@domain.com / YYYY  (grandparent has '@')
+ *     → classifies using email address + filename
+ *
+ *   NEW structure: Category / FriendlyName / YYYY  (grandparent has no '@')
+ *     → re-classifies using friendlyName + filename as keyword signals
+ *     → silently skips if the current category is already correct (no log noise)
+ *     → moves if the file belongs in a different category
+ *
+ * Returns: 'moved' | 'dup' | 'skip' | 'error'
  */
 function migrateFileToCategory(file, baseFolder) {
+  let filename = '(unknown)';
   try {
-    const filename = file.getName();
-    const parentFolder = file.getParents().next(); // year
-    const emailFolder = parentFolder.getParents().next(); // email
-    const senderEmail = emailFolder.getName();
+    filename = file.getName();
 
-    if (!senderEmail.includes('@')) {
-      return false; // not an email folder, skip
+    // Level 1 — year folder
+    const fileParents = file.getParents();
+    if (!fileParents.hasNext()) return 'skip';
+    const yearFolder = fileParents.next();
+    const yearName   = yearFolder.getName();
+
+    // Level 2 — sender/friendly-name folder
+    const yearParents = yearFolder.getParents();
+    if (!yearParents.hasNext()) return 'skip';
+    const level2Folder = yearParents.next();
+    const level2Name   = level2Folder.getName();
+
+    let category, friendlyName, currentPath;
+
+    if (level2Name.includes('@')) {
+      // ── OLD STRUCTURE: DisplayName / email@domain / YYYY ──────────────────
+      const senderEmail   = level2Name;
+      category            = determineCategory('', senderEmail, filename);
+      friendlyName        = getFriendlySenderName(senderEmail, '');
+
+      const emailParents      = level2Folder.getParents();
+      const displayFolderName = emailParents.hasNext() ? emailParents.next().getName() : '(unknown)';
+      currentPath = `${displayFolderName}/${senderEmail}/${yearName}`;
+
+    } else {
+      // ── NEW STRUCTURE: Category / FriendlyName / YYYY ─────────────────────
+      friendlyName = level2Name;
+
+      // Determine the category the file SHOULD be in, using the friendly name
+      // as a keyword hint (replaces underscores with spaces for matching).
+      const friendlyHint = friendlyName.replace(/_/g, ' ').toLowerCase();
+      category = determineCategory('', friendlyHint, filename);
+
+      const friendlyParents    = level2Folder.getParents();
+      const currentCategoryName = friendlyParents.hasNext() ? friendlyParents.next().getName() : '(unknown)';
+      currentPath = `${currentCategoryName}/${friendlyName}/${yearName}`;
     }
 
-    const category = determineCategory('', senderEmail, filename);
-    const friendlyName = getFriendlySenderName(senderEmail, '');
+    const targetPath = `${category}/${friendlyName}/${yearName}`;
 
-    const currentPath = `${emailFolder.getParents().next().getName()}/${senderEmail}/${parentFolder.getName()}`;
-    const targetPath = `${category}/${friendlyName}/${parentFolder.getName()}`;
+    // Silent skip — file is already where it belongs
+    if (currentPath === targetPath) return 'skip';
 
-    if (currentPath === targetPath) {
-      return false;
+    // Log only when we're actually going to do something
+    Logger.log(`  [MOVE] "${filename}"`);
+    Logger.log(`         from : ${currentPath}`);
+    Logger.log(`         to   : ${targetPath}`);
+
+    const catFolder      = getOrCreateFolder(baseFolder, sanitizeFilename(category));
+    const friendlyFolder = getOrCreateFolder(catFolder, sanitizeFilename(friendlyName));
+    const destYearFolder = getOrCreateFolder(friendlyFolder, yearName);
+
+    if (fileExistsInFolder(destYearFolder, filename)) {
+      Logger.log(`         → DUPLICATE at destination — trashing source.`);
+      if (!CONFIG.DRY_RUN) {
+        file.setTrashed(true);
+      } else {
+        Logger.log(`         [DRY RUN] Would trash duplicate source.`);
+      }
+      return 'dup';
     }
 
-    const categoryFolder = getOrCreateFolder(baseFolder, sanitizeFilename(category));
-    const friendlyFolder = getOrCreateFolder(categoryFolder, sanitizeFilename(friendlyName));
-    const yearFolder = getOrCreateFolder(friendlyFolder, parentFolder.getName());
-
-    if (fileExistsInFolder(yearFolder, filename)) {
-      Logger.log(`  Duplicate found during migration! Trashing source file: ${filename}`);
-      file.setTrashed(true);
-      return true;
+    if (CONFIG.DRY_RUN) {
+      Logger.log(`         [DRY RUN] Would move → ${targetPath}`);
+    } else {
+      destYearFolder.addFile(file);
+      yearFolder.removeFile(file);
+      Logger.log(`         → MOVED ✓`);
     }
+    return 'moved';
 
-    yearFolder.addFile(file);
-    parentFolder.removeFile(file);
-
-    Logger.log(`  Moved ${filename} to ${category}/${friendlyName}/${parentFolder.getName()}/`);
-    return true;
   } catch (error) {
-    Logger.log(`  Error migrating file "${file.getName()}": ${error}`);
-    return false;
+    Logger.log(`  [ERROR] "${filename}": ${error}`);
+    return 'error';
   }
 }
 
@@ -361,4 +474,276 @@ function removeDuplicatesInFolder(folder, startTime) {
     Logger.log(`  Error cleaning duplicates in folder "${folder.getName()}": ${error}`);
   }
   return trashedCount;
+}
+
+
+// =============================================================================
+// POST-MIGRATION CLEANUP
+// =============================================================================
+
+/**
+ * Deletes (trashes) folders inside the archive root that are NOT valid intelligent
+ * category folders AND are completely empty (no files anywhere in their subtree).
+ *
+ * Valid top-level folders are derived from CONFIG.CATEGORIES names + CONFIG.DEFAULT_CATEGORY.
+ * Any other top-level folder left over from a previous migration stage is considered
+ * orphaned. Only empty orphaned folders are trashed — non-empty ones are logged as
+ * warnings so you can investigate manually.
+ *
+ * Safe to run multiple times. Always logs every decision.
+ */
+function deleteOrphanedEmptyFolders() {
+  try {
+    const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+
+    // Build the set of valid top-level category names (lowercase for comparison)
+    const validCategories = new Set(
+      CONFIG.CATEGORIES.map(function(c) { return c.name.toLowerCase(); })
+    );
+    validCategories.add(CONFIG.DEFAULT_CATEGORY.toLowerCase());
+
+    const topFolders = baseFolder.getFolders();
+    let trashedCount  = 0;
+    let skippedCount  = 0;
+    let validCount    = 0;
+
+    while (topFolders.hasNext()) {
+      const folder     = topFolders.next();
+      const folderName = folder.getName();
+      const lowerName  = folderName.toLowerCase();
+
+      // --- Valid category: leave it alone ---
+      if (validCategories.has(lowerName)) {
+        Logger.log(`[OK]      "${folderName}" — valid category, skipping.`);
+        validCount++;
+        continue;
+      }
+
+      // --- Orphaned folder: check if empty recursively ---
+      const fileCount = countFilesRecursive(folder);
+
+      if (fileCount === 0) {
+        Logger.log(`[TRASH]   "${folderName}" — orphaned & empty, trashing.`);
+        folder.setTrashed(true);
+        trashedCount++;
+      } else {
+        Logger.log(`[WARNING] "${folderName}" — orphaned but has ${fileCount} file(s). NOT trashed. Investigate manually.`);
+        skippedCount++;
+      }
+    }
+
+    Logger.log('--- deleteOrphanedEmptyFolders summary ---');
+    Logger.log(`  Valid categories kept : ${validCount}`);
+    Logger.log(`  Orphaned & trashed    : ${trashedCount}`);
+    Logger.log(`  Orphaned but non-empty (manual review needed): ${skippedCount}`);
+  } catch (error) {
+    Logger.log(`Critical error in deleteOrphanedEmptyFolders: ${error}`);
+  }
+}
+
+/**
+ * Recursively counts non-trashed files inside a folder and all its subfolders.
+ * @param {GoogleAppsScript.Drive.Folder} folder Root folder to count from.
+ * @returns {number} Total number of non-trashed files found.
+ */
+function countFilesRecursive(folder) {
+  let count = 0;
+
+  // Count files in this folder
+  const files = folder.searchFiles('trashed = false');
+  while (files.hasNext()) {
+    files.next();
+    count++;
+  }
+
+  // Recurse into subfolders
+  const subFolders = folder.getFolders();
+  while (subFolders.hasNext()) {
+    count += countFilesRecursive(subFolders.next());
+  }
+
+  return count;
+}
+
+/**
+ * Validates that no duplicate filenames remain in the Category / FriendlyName / YYYY
+ * structure. Scans every year-level folder and reports duplicate counts.
+ *
+ * This function is READ-ONLY — it never modifies or trashes anything.
+ * Run it after cleanUpAllDuplicates() to confirm deduplication succeeded.
+ */
+function validateNoDuplicates() {
+  const startTime = Date.now();
+  try {
+    const baseFolder      = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    const categoryFolders = baseFolder.getFolders();
+    let totalDuplicates   = 0;
+    let foldersScanned    = 0;
+    let foldersWithDups   = 0;
+
+    while (categoryFolders.hasNext()) {
+      const categoryFolder  = categoryFolders.next();
+      const friendlyFolders = categoryFolder.getFolders();
+
+      while (friendlyFolders.hasNext()) {
+        const friendlyFolder = friendlyFolders.next();
+        const yearFolders    = friendlyFolder.getFolders();
+
+        while (yearFolders.hasNext()) {
+          const yearFolder = yearFolders.next();
+          foldersScanned++;
+
+          // Time-guard: GAS 6-min limit
+          if (Date.now() - startTime > 4.5 * 60 * 1000) {
+            Logger.log(`Validation paused due to time limit after scanning ${foldersScanned} folders.`);
+            Logger.log(`Duplicates found so far: ${totalDuplicates}`);
+            return;
+          }
+
+          const dupsInFolder = countDuplicatesInFolder(yearFolder);
+
+          if (dupsInFolder > 0) {
+            foldersWithDups++;
+            totalDuplicates += dupsInFolder;
+            Logger.log(
+              `[DUP] ${categoryFolder.getName()}/${friendlyFolder.getName()}/${yearFolder.getName()} — ${dupsInFolder} duplicate(s)`
+            );
+          }
+        }
+      }
+    }
+
+    Logger.log('--- validateNoDuplicates summary ---');
+    Logger.log(`  Folders scanned       : ${foldersScanned}`);
+    Logger.log(`  Folders with dups     : ${foldersWithDups}`);
+    Logger.log(`  Total duplicate files : ${totalDuplicates}`);
+
+    if (totalDuplicates === 0) {
+      Logger.log('✅ No duplicates found! Archive is clean.');
+    } else {
+      Logger.log(`⚠️  ${totalDuplicates} duplicate(s) remain. Run cleanUpAllDuplicates() again.`);
+    }
+  } catch (error) {
+    Logger.log(`Critical error in validateNoDuplicates: ${error}`);
+  }
+}
+
+/**
+ * Counts how many files in a folder share a name with another file in the same folder.
+ * Only counts the extras (i.e., if a name appears 3 times, that's 2 duplicates).
+ * @param {GoogleAppsScript.Drive.Folder} folder Folder to inspect.
+ * @returns {number} Number of extra (duplicate) files.
+ */
+function countDuplicatesInFolder(folder) {
+  let dupCount = 0;
+  try {
+    const files     = folder.searchFiles('trashed = false');
+    const seenNames = new Set();
+
+    while (files.hasNext()) {
+      const name = files.next().getName();
+      if (seenNames.has(name)) {
+        dupCount++;
+      } else {
+        seenNames.add(name);
+      }
+    }
+  } catch (error) {
+    Logger.log(`  Error counting duplicates in "${folder.getName()}": ${error}`);
+  }
+  return dupCount;
+}
+
+
+// =============================================================================
+// ARCHIVE AUDIT — READ-ONLY DIAGNOSTIC
+// =============================================================================
+
+/**
+ * READ-ONLY. Scans the entire Gmail_Attachments_Archive and logs a structured
+ * report that can be pasted back to the AI to suggest smarter categories.
+ *
+ * Output per top-level folder:
+ *   [CATEGORY] <name> — <N> sub-folders, <M> total files
+ *     [SENDER]  <friendlyName> — <K> files
+ *       [SAMPLE] <filename1>
+ *       [SAMPLE] <filename2>  (up to 3 samples per sender)
+ *
+ * Runs with a 4.5-min guard; if it times out just run again — it logs progress
+ * as it goes so partial output is still useful.
+ */
+function auditArchiveStructure() {
+  const startTime = Date.now();
+  const MAX_SAMPLES_PER_SENDER = 3;
+
+  try {
+    const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    Logger.log('====== ARCHIVE AUDIT START ======');
+    Logger.log(`Archive root: "${CONFIG.BASE_FOLDER_NAME}"`);
+    Logger.log('');
+
+    const categoryFolders = baseFolder.getFolders();
+    let grandTotal = 0;
+
+    while (categoryFolders.hasNext()) {
+      const categoryFolder  = categoryFolders.next();
+      const categoryName    = categoryFolder.getName();
+      const friendlyFolders = categoryFolder.getFolders();
+
+      // Collect sender stats before logging the header
+      const senderRows = [];
+      let categoryTotal = 0;
+
+      while (friendlyFolders.hasNext()) {
+        const friendlyFolder = friendlyFolders.next();
+        const senderName     = friendlyFolder.getName();
+        const yearFolders    = friendlyFolder.getFolders();
+        let senderTotal      = 0;
+        const samples        = [];
+
+        while (yearFolders.hasNext()) {
+          // Time-guard
+          if (Date.now() - startTime > 4.5 * 60 * 1000) {
+            Logger.log('[TIMEOUT] Scan paused. Partial output above is still useful.');
+            Logger.log(`Grand total so far: ${grandTotal + categoryTotal}`);
+            return;
+          }
+
+          const yearFolder = yearFolders.next();
+          const files      = yearFolder.searchFiles('trashed = false');
+
+          while (files.hasNext()) {
+            const file = files.next();
+            senderTotal++;
+            if (samples.length < MAX_SAMPLES_PER_SENDER) {
+              samples.push(file.getName());
+            }
+          }
+        }
+
+        categoryTotal += senderTotal;
+        senderRows.push({ name: senderName, count: senderTotal, samples });
+      }
+
+      grandTotal += categoryTotal;
+
+      // Log category header
+      Logger.log(`[CATEGORY] "${categoryName}" — ${senderRows.length} sender(s), ${categoryTotal} file(s)`);
+
+      // Log each sender + samples
+      for (let i = 0; i < senderRows.length; i++) {
+        const row = senderRows[i];
+        Logger.log(`  [SENDER]  "${row.name}" — ${row.count} file(s)`);
+        for (let j = 0; j < row.samples.length; j++) {
+          Logger.log(`    [SAMPLE] ${row.samples[j]}`);
+        }
+      }
+      Logger.log('');
+    }
+
+    Logger.log('====== ARCHIVE AUDIT END ======');
+    Logger.log(`Grand total files: ${grandTotal}`);
+  } catch (error) {
+    Logger.log(`Critical error in auditArchiveStructure: ${error}`);
+  }
 }
