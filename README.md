@@ -73,6 +73,12 @@ const CONFIG = {
 | `updateSpreadsheetDashboard()` | Appends current stats to a tracking Google Sheet |
 | `migrateOldStructure()` | Stage 1 migration: old `YYYY/MM_Month/` → `email@domain/YYYY/` |
 | `migrateEmailFoldersToDisplayName()` | Stage 2 migration: `email@domain/` → `DisplayName/email/` |
+| `migrateToIntelligentCategories()` | Stage 3 migration: → `Category/FriendlyName/YYYY/` |
+| `auditPendingMigration()` | **Read-only** — lists all folders NOT yet in a valid category |
+| `cleanUpAllDuplicates()` | Trashes duplicate files in the archive (30-day recovery window) |
+| `validateNoDuplicates()` | Read-only — verifies no duplicates remain after cleanup |
+| `deleteOrphanedEmptyFolders()` | Trashes empty legacy folders that are no longer valid categories |
+| `auditArchiveStructure()` | Read-only — full structured report of the current archive |
 
 ---
 

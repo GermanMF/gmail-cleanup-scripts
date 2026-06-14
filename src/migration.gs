@@ -656,6 +656,148 @@ function countDuplicatesInFolder(folder) {
 
 
 // =============================================================================
+// PENDING MIGRATION AUDIT — READ-ONLY DIAGNOSTIC
+// =============================================================================
+
+/**
+ * READ-ONLY. Scans the Gmail_Attachments_Archive root and reports every
+ * top-level folder that is NOT a valid intelligent category.
+ *
+ * "Pending" means: the folder name is not one of CONFIG.CATEGORIES[].name
+ * nor CONFIG.DEFAULT_CATEGORY — i.e., it still needs to go through
+ * migrateToIntelligentCategories().
+ *
+ * Output format (copy-paste friendly):
+ *   [PENDING] "<folderName>" — <N> sub-folder(s), <M> total file(s)
+ *     [SUB]  "<subFolderName>" — <K> file(s)
+ *       [FILE] <filename>          (up to MAX_SAMPLES files per sub-folder)
+ *
+ * Ends with a single-line summary easy to paste into a spreadsheet:
+ *   SUMMARY | pendingFolders | totalFiles | elapsedSeconds
+ *
+ * Runs with a 4.5-min time guard; partial output is still useful if it times out.
+ */
+function auditPendingMigration() {
+  const startTime = Date.now();
+  const MAX_SAMPLES = 5; // sample filenames per sub-folder
+
+  try {
+    const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+
+    // Build the set of valid category names (case-insensitive)
+    const validCategories = new Set(
+      CONFIG.CATEGORIES.map(function (c) { return c.name.toLowerCase(); })
+    );
+    validCategories.add(CONFIG.DEFAULT_CATEGORY.toLowerCase());
+
+    Logger.log('====== PENDING MIGRATION AUDIT START ======');
+    Logger.log('Archive root : "' + CONFIG.BASE_FOLDER_NAME + '"');
+    Logger.log('Valid categories (' + validCategories.size + '): ' +
+      Array.from(validCategories).join(', '));
+    Logger.log('');
+
+    const topFolders      = baseFolder.getFolders();
+    let pendingFolderCount = 0;
+    let grandTotalFiles   = 0;
+    let timedOut          = false;
+
+    while (topFolders.hasNext()) {
+      if (Date.now() - startTime > 4.5 * 60 * 1000) {
+        Logger.log('[TIMEOUT] Time limit reached. Partial output above is still useful.');
+        timedOut = true;
+        break;
+      }
+
+      const topFolder     = topFolders.next();
+      const topFolderName = topFolder.getName();
+
+      // ── Skip valid categories ──────────────────────────────────────────────
+      if (validCategories.has(topFolderName.toLowerCase())) {
+        Logger.log('[OK]     "' + topFolderName + '" — valid category, skipped.');
+        continue;
+      }
+
+      // ── Pending folder ─────────────────────────────────────────────────────
+      pendingFolderCount++;
+      const subFolders    = topFolder.getFolders();
+      const subRows       = [];
+      let folderFileTotal = 0;
+
+      while (subFolders.hasNext()) {
+        if (Date.now() - startTime > 4.5 * 60 * 1000) {
+          Logger.log('[TIMEOUT] Time limit hit inside "' + topFolderName + '".');
+          timedOut = true;
+          break;
+        }
+
+        const subFolder     = subFolders.next();
+        const subFolderName = subFolder.getName();
+        let   subFileCount  = 0;
+        const samples       = [];
+
+        // Recurse one extra level (year folders inside sender folders)
+        const hasYearFolders = subFolder.getFolders().hasNext();
+        if (hasYearFolders) {
+          const yearFolders = subFolder.getFolders();
+          while (yearFolders.hasNext()) {
+            const yearFolder = yearFolders.next();
+            const files      = yearFolder.searchFiles('trashed = false');
+            while (files.hasNext()) {
+              const file = files.next();
+              subFileCount++;
+              if (samples.length < MAX_SAMPLES) { samples.push(file.getName()); }
+            }
+          }
+        } else {
+          // Files directly inside the sub-folder (flat structure)
+          const files = subFolder.searchFiles('trashed = false');
+          while (files.hasNext()) {
+            const file = files.next();
+            subFileCount++;
+            if (samples.length < MAX_SAMPLES) { samples.push(file.getName()); }
+          }
+        }
+
+        folderFileTotal += subFileCount;
+        subRows.push({ name: subFolderName, count: subFileCount, samples: samples });
+      }
+
+      if (timedOut) break;
+
+      grandTotalFiles += folderFileTotal;
+
+      Logger.log('[PENDING] "' + topFolderName + '" — ' +
+        subRows.length + ' sub-folder(s), ' + folderFileTotal + ' file(s)');
+
+      for (let i = 0; i < subRows.length; i++) {
+        const row = subRows[i];
+        Logger.log('  [SUB]  "' + row.name + '" — ' + row.count + ' file(s)');
+        for (let j = 0; j < row.samples.length; j++) {
+          Logger.log('    [FILE] ' + row.samples[j]);
+        }
+      }
+      Logger.log('');
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    Logger.log('====== PENDING MIGRATION AUDIT END ======');
+    Logger.log('');
+    Logger.log('SUMMARY | pendingFolders=' + pendingFolderCount +
+      ' | totalFiles=' + grandTotalFiles +
+      ' | elapsed=' + elapsed + 's' +
+      (timedOut ? ' | TIMED_OUT=true (run again)' : ''));
+
+    if (pendingFolderCount === 0) {
+      Logger.log('✅ All top-level folders are valid categories. Nothing pending migration!');
+    }
+
+  } catch (error) {
+    Logger.log('Critical error in auditPendingMigration: ' + error);
+  }
+}
+
+
+// =============================================================================
 // ARCHIVE AUDIT — READ-ONLY DIAGNOSTIC
 // =============================================================================
 
