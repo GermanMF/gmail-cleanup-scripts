@@ -20,6 +20,7 @@ A **Google Apps Script** suite that keeps a Gmail inbox clean by:
 ```
 gmail-cleanup-scripts/
 ├── cleanup-attachments.gs     ← Main Apps Script — core logic and wrappers
+├── cleanup-junk.gs            ← Junk file analysis and cleanup module
 ├── utils.gs                   ← Pure utility functions (shared scope in GAS)
 ├── __tests__/                 ← Local Jest test suites
 │   └── utils.test.js          ← 100% coverage tests for utils.gs
@@ -109,6 +110,9 @@ Gmail_Attachments_Archive/
 | `validateNoDuplicates()` | ✅ Read-only | Verifies no duplicates remain after cleanup |
 | `deleteOrphanedEmptyFolders()` | ⚠️ Destructive | Trashes empty legacy folders that are no longer valid categories |
 | `auditArchiveStructure()` | ✅ Read-only | Full structured report of the current archive |
+| `estimateAuditPerformance()` | ✅ Read-only | Runs a 30s test to calculate processing speed and capacity |
+| `auditJunkFiles()` | ✅ Read-only | Scans Drive for junk files in 5-min resumable batches |
+| `deleteConfirmedJunkFiles()` | ⚠️ Destructive | Reads Dashboard Sheet, trashes CONFIRMED junk files |
 
 ### Key Helpers
 

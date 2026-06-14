@@ -41,5 +41,6 @@
 - [x] Git repo initialized, pushed to GitHub (`main` + `dev` branches).
 - [x] `CONTEXT.md` added to repo — persistent AI + contributor project overview, committed to `dev`.
 - [x] Knowledge Item (KI) created in AI store — auto-injects project context at every new session start.
+- [x] **Junk file cleanup** — `auditJunkFiles()` and `deleteConfirmedJunkFiles()` with HTML report and Sheets dashboard confirmation added.
 
 - [x] **Multi-account support** — deferred (GAS single-account limitation confirmed by investigation).

@@ -180,3 +180,8 @@ When moving files between folders, Google Drive's `Folder.addFile()` combined wi
 1. Check `fileExistsInFolder(destination, filename)` prior to moving.
 2. If true, safely call `file.setTrashed(true)` on the source file rather than `deleteFile()` to give the user a 30-day recovery window.
 3. Added `cleanUpAllDuplicates()` to recursively traverse a hierarchy and trash any subsequent files sharing names using a `Set`.
+
+### Handling 6-Minute Execution Limits in GAS for Drive Scans
+- **Date:** 2026-06-13
+- **Lesson:** Walking a deep Drive folder tree recursively is extremely slow and will often hit the 6-minute GAS limit. To make large audits reliable, flatten the traversal by building a queue of folder IDs (e.g., all `YYYY` folders), save the queue state to a JSON file (or script properties), and process it in 5-minute batches.
+- **Action:** Implemented state persistence via `junk_audit_state.json` for `auditJunkFiles()` and added an estimation tool.
