@@ -1,0 +1,182 @@
+# 📚 Lessons Log — Gmail Cleanup Scripts
+
+> Append a new entry at the top after each dev session. Format: `## YYYY-MM-DD — <title>`.
+> This file is referenced during session wrap-up by the `session-wrapup` skill.
+
+---
+
+## 2026-06-13 — Stage 3 Migration Audit & Performance Optimization
+
+### Context
+Finalized the migration of Drive files to the Stage 3 category-based structure. Created a read-only audit tool (`auditPendingMigration`) to list un-migrated folders, expanded the `CONFIG` aliases and keywords based on real-world logs, and drastically improved migration speed by skipping already valid folders.
+
+### Lessons & Patterns
+
+1. **Read-only audit tools are invaluable for data mapping:** Instead of guessing keywords, `auditPendingMigration()` dumped the exact folder structure of pending files in a copy-paste-friendly format, allowing quick creation of accurate `SENDER_ALIASES`.
+2. **Optimize loop iterations in GAS to avoid timeouts:** The `migrateToIntelligentCategories()` script was timing out because it traversed already-migrated category folders. Adding a simple `validCategories.has(topFolderName)` skip drastically reduced iteration time, allowing the script to focus its 4.5-minute execution window exclusively on pending files.
+3. **Handle duplicate legacy folder names gracefully:** Real-world archives often contain duplicated sender emails under different Display Names. The `cleanUpAllDuplicates()` function successfully cleaned up files that were correctly merged into the same new category folder but duplicated due to the migration.
+4. **Context persistence matters:** Updated the `CONTEXT.md` to reflect the new `Category/FriendlyName/YYYY/` hierarchy so future AI sessions or maintainers understand the target structure immediately.
+
+---
+
+## 2026-06-12 — DRY_RUN Mode + Batch Completion Notification
+
+### Context
+Implemented the last two medium-priority backlog items: a `DRY_RUN` config flag that turns all write operations into no-ops, and `sendBatchCompletionNotification()` — a lightweight HTML email sent at the end of each `processGmailAttachments()` run.
+
+### Lessons & Patterns
+
+1. **`DRY_RUN` belongs in CONFIG, not as a function parameter** — passing it through every function call would be noisy and error-prone. A top-level CONFIG flag is readable, togglable in the GAS editor, and accessible in every file without refactoring function signatures.
+
+2. **Separate the "full report" from the "batch notification"** — `sendHtmlCleanupReport()` makes several expensive `countThreads` calls. A post-batch notification only needs the counters the main loop already computed. `sendBatchCompletionNotification()` makes zero extra Gmail queries, keeping well within the 6-minute GAS limit.
+
+3. **DRY_RUN guard placement matters** — the guard must wrap the *write* call, not the *read* that precedes it. `fileExistsInFolder()` should still execute in dry-run (it's a read); only `createFile()` gets skipped. This gives accurate dedup hit logs even during dry runs.
+
+4. **Mode banner at the top of every destructive entry point** — `if (CONFIG.DRY_RUN) { Logger.log('⚠️ DRY RUN...') }` at the very start of `processGmailAttachments` and `migrateToIntelligentCategories` makes the mode unmistakable in the GAS execution log.
+
+5. **DRY RUN banner in the notification email prevents misreading** — when both `DRY_RUN: true` and `ENABLE_BATCH_NOTIFICATION: true`, the subject is prefixed `[DRY RUN]` and the header turns orange. Eliminates risk of treating a dry-run result as a live run.
+
+6. **`src/` reorganization was already complete** — `.clasp.json` already had `rootDir: "src"`, `package.json` already pointed `collectCoverageFrom` and test imports to `src/**`. Always verify before assuming structural work is pending.
+
+---
+
+## 2026-06-07 — Unit-Testable Utility Layer (Jest Integration)
+
+
+### Context
+Extracted 10 pure utility functions from `cleanup-attachments.gs` into a new `utils.gs` file. Set up a local Jest testing environment in Node.js to test these functions independently of the Google Apps Script runtime.
+
+### Lessons & Patterns
+
+1. **Shared Global Scope in GAS** — Multiple `.gs` files in the same GAS project share the same global scope. Functions extracted to `utils.gs` do not need to be explicitly imported into `cleanup-attachments.gs`; they are available automatically at runtime.
+
+2. **Testing GAS Code Locally** — By appending an `if (typeof module !== 'undefined') { module.exports = { ... }; }` block to the end of a `.gs` file, the file remains valid in the GAS environment (which ignores the block since `module` is undefined) while allowing Node.js testing frameworks like Jest to `require()` and test the pure functions locally.
+
+3. **Clasp and Test Files** — Added `__tests__/**` and `coverage/**` to `.claspignore` to prevent pushing local test suites and coverage reports to the Google Apps Script remote project.
+
+4. **IDE Support for Test Frameworks** — Added `"jest"` to the `typeAcquisition.include` array in `jsconfig.json` to ensure the editor provides autocomplete and type checking for Jest globals (`describe`, `test`, `expect`) without needing to explicitly install `@types/jest`.
+
+---
+
+## 2026-06-07 — HTML Report + Spreadsheet Dashboard
+
+### Context
+Implemented two low-priority features: a styled HTML email report (`sendHtmlCleanupReport`) and a Google Sheets historical dashboard (`updateSpreadsheetDashboard`). Both are opt-in via CONFIG flags and share a `collectCleanupStats()` helper to avoid duplicating Gmail query calls.
+
+### Lessons & Patterns
+
+1. **Extract a shared stat collector when two features need the same data** — `collectCleanupStats()` runs all the Gmail `countThreads` and `getTopSenders` calls once, returning a plain object. Both the HTML report and the dashboard consume it. This avoids hitting the 6-minute GAS wall-clock limit twice.
+
+2. **Use table-based HTML for email compatibility** — CSS `display:grid`, `flexbox`, and `linear-gradient` do not render reliably in Gmail or Outlook. Use `<table>` layouts with inline `style=""` attributes for every element. No `<style>` blocks.
+
+3. **Progress bar in email via a two-cell table** — `width="${progressBar}%"` on the first `<td>` and an empty second `<td>` simulates a progress bar in email clients without CSS `width` on `<div>`.
+
+4. **`SpreadsheetApp.create()` returns the spreadsheet object with a usable ID** — log the ID immediately after creation so the user can copy it back into CONFIG. Never assume the user will find it in Drive manually.
+
+5. **`appendRow()` is simpler and safer than `getLastRow()`** — for the Run History sheet, `appendRow()` is idempotent with respect to sheet state and does not require calculating the next empty row manually.
+
+6. **`clearContents()` on the Summary sheet before rewriting** — avoids stale data if the number of rows changes between runs. `clearContents()` is preferred over `clear()` since it preserves column widths set at sheet creation.
+
+7. **OAuth scopes in `appsscript.json` must be complete** — when `oauthScopes` is explicitly listed, GAS does NOT auto-detect additional scopes from the code. `gmail.send` (for `MailApp`) and `spreadsheets` (for `SpreadsheetApp`) must both be declared or the script will fail at runtime with an authorization error.
+
+---
+
+## 2026-06-07 — Attachment Deduplication + Configurable Exclusion List
+
+### Context
+Implemented two medium-priority features: filename-based dedup in `saveAttachment()` and a configurable sender exclusion list in `processMessage()`. Both features are pure-function helpers checked at the correct pipeline stage.
+
+### Lessons & Patterns
+
+1. **Dedup by filename is the right strategy for GAS** — Drive's `getFilesByName()` is a native indexed call, much faster than iterating all files. The `fileExistsInFolder()` helper is read-only and safe to call on every attachment.
+
+2. **The dedup guard and the label guard are complementary** — `Processed_Drive` prevents re-processing at the thread level; `fileExistsInFolder()` prevents re-saving at the file level. Having both means the system is resilient even if the label is manually removed.
+
+3. **Sender exclusion belongs in `processMessage()`, not `processThread()`** — the sender is per-message, not per-thread (a thread can have replies from multiple senders). Checking at the message level is the correct granularity.
+
+4. **Domain rules with `endsWith('@domain.com')` also match subdomains** — `'@foo.com'` will match `bar@sub.foo.com`. Document this clearly. If the user needs exact domain matching, they should add the rule with the full subdomain.
+
+5. **Always guard optional CONFIG keys with a null/length check** — `isSenderExcluded()` returns `false` early if `EXCLUDED_SENDERS` is empty or undefined, so existing setups that don't define the key still work correctly.
+
+---
+
+## 2026-06-07 — clasp CLI Integration
+
+### Context
+Wired up `@google/clasp` as the primary deployment workflow. Created `package.json`, `appsscript.json`, `.clasp.json.template`, `.clasp.json` (gitignored), and `.claspignore`. Updated README, CONTEXT.md, and todo.md.
+
+### Lessons & Patterns
+
+1. **`@google/clasp` 2.x has unresolved upstream vulnerabilities** — `googleapis-common` depends on a vulnerable `uuid`. Fix: upgrade to `clasp@^3.3.0` via `npm audit fix --force`. This is an upstream issue, not a risk in our deployed GAS code.
+
+2. **Use `^3.3.0` for `@google/clasp` in `package.json`** — `2.x` is effectively abandoned. `3.x` is the maintained line and matches the globally installed version.
+
+3. **`appsscript.json` must be present for `clasp push` to include the manifest** — without it, GAS uses default settings (V8 runtime not guaranteed). Always commit `appsscript.json`.
+
+4. **`.claspignore` controls push, not pull** — `clasp pull` downloads everything in the remote project. Keep only `.gs` files and `appsscript.json` in GAS.
+
+5. **`jsconfig.json` should use `include: ["*.gs"]` glob** — auto-covers future modules without updating the config each time.
+
+6. **Script ID goes in `.clasp.json` (gitignored), not the template** — onboarding = `cp .clasp.json.template .clasp.json` + fill Script ID.
+
+---
+
+## 2026-06-03 — AI Context Persistence (Session 2)
+
+### Context
+Second session: reviewed the full project from scratch, created a persistent project overview, wired up the Knowledge Item (KI) store for auto-injection, and committed `CONTEXT.md` to the repo.
+
+### Lessons & Patterns
+
+1. **AI context is conversation-scoped by default** — artifacts written to `brain/<conversation-id>/` are invisible in future sessions. Use the KI store (`antigravity-ide/knowledge/<ki-name>/`) for cross-session persistence; the summary in `metadata.json` is injected automatically at every new conversation start.
+
+2. **Two-layer context strategy** — KI metadata gives the AI a zero-click summary; `CONTEXT.md` in the repo gives humans and the AI a deeper reference that survives KI store resets. Keep both in sync whenever architecture changes.
+
+3. **PowerShell does not support `&&` as a command separator** — use `;` instead (e.g., `git add .; git commit -m "msg"`). The `&&` idiom is bash-specific.
+
+4. **Session wrap-up is non-negotiable** — updating `todo.md` + `lessons.md` + committing ensures zero context loss between sessions. Treat it as part of the definition of done for every task.
+
+---
+
+## 2026-06-03 — Project Scaffold & Repo Initialization
+
+### Context
+Initial session: analyzed `cleanup-attachments.gs`, scaffolded documentation, created git repo, and pushed to GitHub.
+
+### Lessons & Patterns
+
+1. **Google Apps Script has no native test runner** — all logic that can be extracted into pure functions should be isolated so they can eventually be unit-tested with a Node harness (e.g., `@google/clasp` + Jest). Keep GAS API calls (GmailApp, DriveApp, Logger) at the edges of each function.
+
+2. **`computeThresholdDate` is timezone-sensitive** — `new Date()` returns the script runner's local time, which is UTC in GAS. If the script is triggered at midnight UTC it may evaluate the date boundary differently than expected by a user in UTC-6. Always verify date math against UTC when diagnosing edge cases.
+
+3. **`GmailApp.search` paginates at 500** — the `countThreads` helper correctly pages, but any caller that just calls `search(q, 0, 500)` will silently miss threads beyond page 1. Document this cap clearly wherever sampling is intentional.
+
+4. **Drive `addFile` / `removeFile` is a reference move, not a copy** — files are not duplicated; the file object moves its parent reference. This means if a migration fails mid-way, the file may temporarily appear in both folders (or neither). Always wrap in try/catch and log the file ID.
+
+5. **`Logger.log` output disappears after the GAS execution ends** — for production use consider writing critical summaries to a Google Sheet or sending via `MailApp` so they are auditable after the fact.
+
+6. **`.gitignore` must exclude `.clasp.json`** — this file contains OAuth tokens when using the clasp CLI and must **never** be committed.
+
+### Open Questions
+- Should the archive folder be created at the root of Drive or inside a specific shared drive?
+- What is the intended behavior when an attachment already exists in the Drive folder (overwrite, skip, or rename)?
+
+---
+
+## 2026-06-08 — Intelligent Filtering and Folder Reorganization
+
+### Context
+Implemented intelligent filtering based on subject, filename, and sender rules. Migrated from a strict 'DisplayName/email@domain' structure to a clean 'Category/FriendlyName' structure. Added a migration script for existing files. Fixed report timeout vulnerabilities for large processing queues.
+
+### Lessons & Patterns
+
+1. **Avoid replacing entire file blocks if chunk matching is ambiguous** — when modifying heavily structured files like GAS scripts via API, prefer writing targeted patches or doing a full-file overwrite instead of relying on line-range replacements that might capture too much.
+2. **Abstract folder hierarchy logic** — moving from a hardcoded 3-level Drive hierarchy to a category-based logic required careful decoupling in `main.gs` and `migration.gs`.
+3. **Execution timeouts require manual checkpoints in GAS** — `Date.now() - startTime > 4.5 * 60 * 1000` is a mandatory check in heavy loops (like `countThreads`) because GAS will brutally crash the script at 6 minutes, leaving no final logs.
+4. **Use node.js unit tests for pure GAS functions** — testing the categorization rules in Jest (which takes <1s) proved invaluable compared to deploying to GAS and running against live emails.
+
+### Deduplication during Migration
+When moving files between folders, Google Drive's `Folder.addFile()` combined with `removeFile()` creates duplicates if the destination already contains a file with the same name. To mitigate this:
+1. Check `fileExistsInFolder(destination, filename)` prior to moving.
+2. If true, safely call `file.setTrashed(true)` on the source file rather than `deleteFile()` to give the user a 30-day recovery window.
+3. Added `cleanUpAllDuplicates()` to recursively traverse a hierarchy and trash any subsequent files sharing names using a `Set`.

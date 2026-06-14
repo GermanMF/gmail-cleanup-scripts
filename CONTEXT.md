@@ -85,8 +85,8 @@ Decision is based on the **newest message date** in each thread.
 
 ```
 Gmail_Attachments_Archive/
-└── Display Name/
-    └── email@domain.com/
+└── Category/             (e.g., Facturas, Estados de Cuenta, etc.)
+    └── FriendlyName/     (e.g., Uber, Amazon, BBVA)
         └── YYYY/
             └── YYYYMMDD_localpart_OriginalFilename.ext
 ```
@@ -103,6 +103,12 @@ Gmail_Attachments_Archive/
 | `generateCleanupReport(title?)` | ✅ Read-only | Stats snapshot to Logger. Run anytime. |
 | `migrateOldStructure()` | ⚠️ One-time | Stage 1: old `YYYY/MM_Month/` → `email@domain/YYYY/` |
 | `migrateEmailFoldersToDisplayName()` | ⚠️ One-time | Stage 2: `email@domain/` → `DisplayName/email/` |
+| `migrateToIntelligentCategories()` | ⚠️ One-time | Stage 3: → `Category/FriendlyName/YYYY/` |
+| `auditPendingMigration()` | ✅ Read-only | Lists all folders NOT yet in a valid category |
+| `cleanUpAllDuplicates()` | ⚠️ Destructive | Trashes duplicate files in the archive (30-day recovery window) |
+| `validateNoDuplicates()` | ✅ Read-only | Verifies no duplicates remain after cleanup |
+| `deleteOrphanedEmptyFolders()` | ⚠️ Destructive | Trashes empty legacy folders that are no longer valid categories |
+| `auditArchiveStructure()` | ✅ Read-only | Full structured report of the current archive |
 
 ### Key Helpers
 
