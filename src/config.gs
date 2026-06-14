@@ -102,6 +102,29 @@ const CONFIG = {
     '@axtel.com.mx': 'AXTEL',
     '@aeromexico.com': 'Aeromexico',
     '@volaris.com': 'Volaris',
+    // ── Nuevos aliases detectados en auditoría 2026-06-13 ─────────────────
+    '@aforemovil.com': 'Afore Móvil',
+    '@aforeweb.com.mx': 'Afore Web',
+    '@rappi.com': 'Rappi',
+    '@allianz.com.mx': 'Allianz',
+    '@virginiasurety.com': 'Samsung Care',
+    '@dentalia.com': 'Dentalia',
+    '@gbm.com.mx': 'GBM',
+    '@condovive.com': 'CondoVive',
+    '@invextarjetas.com.mx': 'Invex Tarjetas',
+    '@santander.com.mx': 'Santander',
+    '@notificaciones.santander.com.mx': 'Santander',
+    '@envio.santander.com.mx': 'Santander',
+    '@contactosanpablo.com.mx': 'San Pablo Farmacia',
+    '@enviosmail.com': 'Lab Médico del Chopo',
+    '@abccapital.com.mx': 'Ualá',
+    '@monederodelahorro.com.mx': 'Monedero del Ahorro',
+    '@bitcodes.co': 'Bitcodes',
+    '@keys4us.com': 'Keys4Us',
+    '@news.paypal.com': 'PayPal',
+    '@nominalia.com': 'Nominalia',
+    '@ikeasistencia.com': 'IKEA Asistencia',
+    '@lacomer.com.mx': 'La Comer',
   },
   /**
    * Rules for intelligent filtering. Each category is checked in order — MOST
@@ -149,6 +172,9 @@ const CONFIG = {
         'gobierno de la ciudad', 'gobierno del estado',
         'serviciosdigitales', 'comprobante vigencia',
         'comprobante localizacion',
+        // INDAUTOR / cultura.gob.mx (detected 2026-06-13)
+        'indautor', 'cultura.gob', 'sindautor', 'derechos de autor',
+        'registro indautor', 'acuse',
       ],
     },
     /**
@@ -184,6 +210,9 @@ const CONFIG = {
         'estado de cuenta', 'account statement', 'edos',
         'resumen de movimientos', 'resumen movimientos',
         'tu estado de cuenta',
+        // GBM inversiones + INVEX (detected 2026-06-13)
+        'gbm', 'invex', 'tuestadodecuenta', 'estadosdecuenta',
+        'smart statement',
       ],
     },
     /**
@@ -279,6 +308,13 @@ const CONFIG = {
         'importante', 'urgente', 'urgent', 'aviso de privacidad',
         'notificacion legal', 'contrato', 'poliza', 'seguro medico',
         'accidente', 'atencion medica',
+        // Pólizas y cobertura médica (detected 2026-06-13)
+        'allianz', 'samsung care', 'dentalia', 'gmm', 'colectivo empresarial',
+        'condiciones generales', 'guia abc', 'concierge',
+        // Lab médico y resultados
+        'chopo', 'laboratorio', 'resultado', 'analisis clinico',
+        // Aclaraciones bancarias / contratos
+        'aclaracion', 'carta', 'ikea', 'ikeasistencia',
       ],
     },
     /**
