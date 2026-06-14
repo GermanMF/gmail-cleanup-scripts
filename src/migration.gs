@@ -231,9 +231,19 @@ function migrateToIntelligentCategories() {
     }
     Logger.log('(Only moves and errors are logged — silent skips mean the file is already correct)');
 
+    const validCategories = new Set(
+      CONFIG.CATEGORIES.map(function(c) { return c.name.toLowerCase(); })
+    );
+    validCategories.add(CONFIG.DEFAULT_CATEGORY.toLowerCase());
+
     while (categoryFolders.hasNext()) {
       const topFolder     = categoryFolders.next();
       const topFolderName = topFolder.getName();
+
+      if (validCategories.has(topFolderName.toLowerCase())) {
+        // Skip already-intelligent categories to speed up migration
+        continue;
+      }
 
       const subFolders = topFolder.getFolders();
       while (subFolders.hasNext()) {
