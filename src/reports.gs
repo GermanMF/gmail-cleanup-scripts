@@ -601,6 +601,46 @@ function getOrCreateDashboard() {
   return { spreadsheet: spreadsheet, historySheet: historySheet, summarySheet: summarySheet };
 }
 
+/**
+ * Returns (and if needed, creates) the Junk Audit sheet in the Dashboard spreadsheet.
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+ */
+function getOrCreateJunkAuditSheet() {
+  const { spreadsheet } = getOrCreateDashboard();
+  const sheetName = CONFIG.JUNK_FILE_RULES.JUNK_AUDIT_SHEET_NAME || 'Junk Audit';
+  let sheet = spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(sheetName);
+    const headers = [
+      'Status', 'Timestamp', 'File Name', 'Folder Path', 'Size (KB)', 'Reason', 'Drive URL', 'File ID'
+    ];
+    const headerRange = sheet.getRange(1, 1, 1, headers.length);
+    headerRange.setValues([headers]);
+    headerRange.setBackground('#e65100').setFontColor('#ffffff')
+      .setFontWeight('bold').setFontSize(11);
+    sheet.setFrozenRows(1);
+
+    // Set Data Validation for Status column
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(['PENDING', 'CONFIRMED', 'SKIP'], true)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange('A2:A').setDataValidation(statusRule);
+
+    sheet.setColumnWidth(1, 100); // Status
+    sheet.setColumnWidth(2, 160); // Timestamp
+    sheet.setColumnWidth(3, 250); // File Name
+    sheet.setColumnWidth(4, 300); // Folder Path
+    sheet.setColumnWidth(5, 80);  // Size
+    sheet.setColumnWidth(6, 150); // Reason
+    sheet.setColumnWidth(7, 300); // Drive URL
+    sheet.setColumnWidth(8, 250); // File ID
+  }
+
+  return sheet;
+}
+
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================

@@ -328,6 +328,40 @@ const CONFIG = {
     },
   ],
   /**
+   * Rules for detecting and cleaning up junk files in the Drive archive.
+   */
+  JUNK_FILE_RULES: {
+    /** Fragments of filenames (case-insensitive) that indicate a useless file */
+    NAME_KEYWORDS: [
+      'footer', 'signature', 'firma', 'untitled', 'noname',
+      'image001', 'image0001', 'att00001', 'winmail',
+      'inline', 'smime', 'part_',
+    ],
+    /** Extensions that should never be in the archive */
+    BAD_EXTENSIONS: ['.p7s', '.ics', '.vcf', '.dat', '.eml', '.msg'],
+    /** MIME types indicating metadata/signatures, not real documents */
+    BAD_MIME_TYPES: [
+      'application/pkcs7-signature',
+      'application/x-pkcs7-signature',
+      'message/rfc822',
+      'text/calendar',
+    ],
+    /** Files below this size (bytes) are suspicious and marked as junk */
+    TINY_FILE_THRESHOLD_BYTES: 5 * 1024,  // 5 KB
+    /** Name of the sheet in the Dashboard spreadsheet to log candidates */
+    JUNK_AUDIT_SHEET_NAME: 'Junk Audit',
+    /**
+     * Exceptions to prevent accidental deletion.
+     * Includes exact file names and full/partial folder paths.
+     */
+    EXCEPTIONS: {
+      /** Exact filenames (case-insensitive) to skip even if they match rules */
+      FILENAMES: ['firma_notario.pdf', 'important_signature.png'],
+      /** Substrings of folder paths to skip (e.g., 'Importantes/') */
+      FOLDER_PATHS: ['Importantes/', 'Contrasenas/', 'Personales/'],
+    }
+  },
+  /**
    * Default category for emails that don't match any rules above.
    */
   DEFAULT_CATEGORY: 'Otros',
