@@ -1,0 +1,47 @@
+# ──────────────────────────────────────────────
+#  .claspignore — files NOT pushed to GAS
+#  clasp pushes EVERYTHING by default; list here what to EXCLUDE.
+#  Syntax: uses .gitignore-style globs.
+# ──────────────────────────────────────────────
+
+# Node tooling & tests — NEVER deploy to GAS
+node_modules/**
+node_modules/
+__tests__/**
+coverage/**
+
+# npm config files
+package.json
+package-lock.json
+
+# clasp config & templates
+.clasp.json
+.clasp.json.template
+.claspignore
+
+# Project documentation
+README.md
+CONTEXT.md
+**/*.md
+
+# Editor / IDE config
+jsconfig.json
+.vscode/**
+.idea/**
+
+# Task management (gitignored locally but belt-and-suspenders)
+tasks/**
+
+# CI / secrets
+.env
+.env.*
+.gitignore
+.symdexignore
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# HTML files (from node_modules that leaked — belt & suspenders)
+**/*.html

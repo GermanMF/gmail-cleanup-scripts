@@ -22,6 +22,9 @@ service-account*.json
 .env.*
 !.env.example
 
+# Machine/account-specific operational state
+docs/HANDOVER.local.md
+
 # Editor directories and files
 .idea/
 .vscode/
@@ -40,6 +43,7 @@ desktop.ini
 # Build / dist output (if clasp push is ever used)
 dist/
 build/
+coverage/
 
 # Logs
 *.log
