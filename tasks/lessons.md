@@ -1,9 +1,33 @@
 # 📚 Lessons Log — Gmail Cleanup Scripts
 
 > Append a new entry at the top after each dev session. Format: `## YYYY-MM-DD — <title>`.
-> This file is referenced during session wrap-up by the `session-wrapup` skill.
+> This file is referenced during session wrap-up by the repo-scoped `gmail-cleanup-operations` skill.
 
 ---
+
+## 2026-08-24 — Evidence-aware bank statements and production-safe handover
+
+### Context
+
+Audited live Ualá and Santander mail, corrected statement false positives across the shared bank taxonomy, deployed the change, observed controlled repair batches, and created a repository-level handover system for future Codex/LLM instances.
+
+### Lessons & Patterns
+
+1. **A subject keyword is a candidate, not evidence.** `estado de cuenta` appeared in Paperless, consultation, design, education, and password-instruction notices. True statement classification now requires a PDF/XML/ZIP document or explicit current-document access/download wording.
+2. **Attachment-only is also too strict.** GBM, PayPal, Nu, Hey Banco, Openbank, and some Banamex flows deliver statements through a link or app. Validate explicit availability/access language instead of assuming all banks attach a file.
+3. **Repair old labels separately from preventing new errors.** Incoming resolution validates message evidence; historical repair targets known incorrect statement labels; backfill filters statement candidates before bulk labeling.
+4. **One shared taxonomy can still support bank-specific polymorphism.** Ualá keeps the same child names but adds its own vocabulary and evaluates promotions before generic transactions.
+5. **Script locks should skip, not overlap.** The first post-deploy scheduled run safely skipped while the hourly classifier held the lock. A later controlled run completed without errors and preserved read/archive state.
+6. **Verify the mailbox after the log.** A controlled repair removed the known false positives, but a newly arrived password-instruction notice exposed one more pattern. Add real examples to regression tests and re-sample the live label after every repair.
+7. **Separate stable knowledge from changing state.** `KNOWLEDGE.md` holds invariants, `CONTEXT.md` maps architecture, tracked `docs/HANDOVER.md` is public guidance, and ignored `docs/HANDOVER.local.md` carries the private snapshot that future agents must re-verify.
+8. **Repository-scoped Codex context is portable.** Root `AGENTS.md` plus `.agents/skills/.../SKILL.md` travels with the repository and avoids reliance on machine-specific memories or personal skill paths.
+
+### Verified production results
+
+- Controlled repairs completed without errors and preserved read/archive state.
+- The sampled Santander statement label contained document-backed statements and no known false patterns.
+- The configured Ualá sender query matched live mail; historical child-label backfill was still pending at the final snapshot.
+- The complete local regression suite passed.
 
 ## 2026-06-13 — Stage 3 Migration Audit & Performance Optimization
 
@@ -185,3 +209,29 @@ When moving files between folders, Google Drive's `Folder.addFile()` combined wi
 - **Date:** 2026-06-13
 - **Lesson:** Walking a deep Drive folder tree recursively is extremely slow and will often hit the 6-minute GAS limit. To make large audits reliable, flatten the traversal by building a queue of folder IDs (e.g., all `YYYY` folders), save the queue state to a JSON file (or script properties), and process it in 5-minute batches.
 - **Action:** Implemented state persistence via `junk_audit_state.json` for `auditJunkFiles()` and added an estimation tool.
+## 2026-08-22 — Separate document retention from mailbox cleanup
+
+- A Gmail cleanup strategy should not infer backup success from the absence of a thrown error; every attachment operation must return an explicit result and mailbox mutation must be gated on a complete verified summary.
+- File size is not a safe proxy for inline junk. Real financial PDFs can be under 10 KB; use Gmail MIME attachment options to exclude inline images and preserve real files regardless of size.
+- Filename-only deduplication can destroy distinct documents. Compare size plus SHA-256, and suffix same-name/different-content collisions.
+- Large mailboxes need two lanes: verified retention for documents and staged cleanup for attachment-free low-value categories. Bulk deletion requires a separate, manual confirmation label.
+
+## 2026-08-22 — Ordered incoming rules must override Gmail categories
+
+- Gmail categories are useful candidate signals, not authority: banking and account-security mail can appear under Updates or Promotions.
+- Evaluate priority rules first, then process low-value categories with per-run first-match semantics.
+- Low-value archive/Trash actions need independent runtime gates for real attachments, protected domains, starred/important state, and conversations containing sent messages.
+- Keep automatic retention disabled until labels have accumulated enough mail for a human audit; a configurable label-empty operation still needs a typed confirmation token.
+
+## 2026-08-24 — Separate institution, message type, and required action
+
+- A financial sender is one classification dimension, not the final label. Apply an institution parent and derive a reusable child from ordered subject phrases so `Santander/Estados de cuenta` and `Santander/Hipoteca` stay navigable without multiplying Gmail searches.
+- Security and fraud language must precede broad words such as `compra`, `cargo`, and `pago`; otherwise verification or unrecognized-transaction alerts become routine records.
+- “Actionable” must be an explicit query, never the fallback for all Gmail Updates. The safe fallback is a delayed routine lane with attachment, sender, starred, sent-thread, and protected-content gates.
+- Historical cleanup needs separate entry points from hourly classification: read-only audit first, then small confirmation-gated batches. Financial backfill can be label-only; Inbox draining may archive but must not use Trash.
+- Applying both the institution parent and child lets future queries exclude processed mail efficiently while preserving a useful parent-level Gmail view.
+- In `@google/clasp` 3.x the IDE command is `clasp open-script`, not `clasp open`. An unknown command may print general help and still appear successful, so verify the supported command list instead of trusting only the exit status.
+- Large label-only Gmail backfills should use small locked batches behind an idempotent temporary trigger. Let the handler remove its own trigger after an empty, error-free batch so completion does not require an agent to poll for hours.
+- `GmailThread.getMessages()` across a 100-thread batch can consume roughly three minutes. For subject-based historical classification, use Gmail search subject predicates and `GmailLabel.addToThreads()` so reads and writes remain bulk operations.
+- Gmail historical search can distinguish accented Spanish terms even when the incoming pure-text classifier normalizes them. Expand query phrases with accented variants (`autorización`, `promoción`, `código`) and chunk long subject OR groups so the live rule and historical backfill classify the same mail.
+- When a temporary trigger shares a script lock with a long hourly job, schedule it beyond the observed batch duration. Finance repair now runs every ten minutes, processes obsolete labels before expensive child-label inspection, and self-removes only after repair and backfill are both empty.

@@ -62,9 +62,9 @@ function estimateAuditPerformance() {
 }
 
 /**
- * Scans the Drive archive for junk files (footers, signatures, empty docs, etc.)
- * based on JUNK_FILE_RULES. Runs in batches to avoid the 6-minute timeout,
- * saving its state to a JSON file.
+ * Non-destructive scan of the Drive archive for junk files. It never trashes
+ * candidates, but it does write resumable state and candidate rows to Sheets
+ * unless DRY_RUN is enabled.
  */
 function auditJunkFiles() {
   try {
@@ -136,7 +136,12 @@ function auditJunkFiles() {
     const isFinished = state.queue.length === 0;
 
     // Always log what we found THIS run to the sheet to prevent data loss if it fails later
-    if (state.candidates.length > 0) {
+    if (state.candidates.length > 0 && CONFIG.DRY_RUN) {
+      Logger.log(`[DRY RUN] Found ${state.candidates.length} junk candidate(s); Sheet/email writes skipped.`);
+      state.candidates.slice(0, 25).forEach(function (candidate) {
+        Logger.log(`  [CANDIDATE] ${candidate.path}/${candidate.name} — ${candidate.reason}`);
+      });
+    } else if (state.candidates.length > 0) {
       const sheet = getOrCreateJunkAuditSheet();
       const now = new Date();
       
@@ -200,7 +205,11 @@ function deleteConfirmedJunkFiles() {
       Logger.log('⚠️ DRY RUN MODE ENABLED — no files will actually be trashed.');
     }
 
-    const sheet = getOrCreateJunkAuditSheet();
+    const sheet = CONFIG.DRY_RUN ? _getExistingJunkAuditSheet() : getOrCreateJunkAuditSheet();
+    if (!sheet) {
+      Logger.log('No existing Junk Audit sheet is configured. Nothing changed.');
+      return;
+    }
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) {
       Logger.log('Junk Audit sheet is empty.');
@@ -238,15 +247,17 @@ function deleteConfirmedJunkFiles() {
           });
         } catch (fileError) {
           Logger.log(`Error trashing file ${fileId} (${fileName}): ${fileError}`);
-          sheet.getRange(i + 2, 1).setValue('ERROR');
-          sheet.getRange(i + 2, 1).setBackground('#ffebee').setFontColor('#c62828');
+          if (!CONFIG.DRY_RUN) {
+            sheet.getRange(i + 2, 1).setValue('ERROR');
+            sheet.getRange(i + 2, 1).setBackground('#ffebee').setFontColor('#c62828');
+          }
         }
       }
     }
 
     if (trashedCount > 0) {
       Logger.log(`Successfully trashed ${trashedCount} junk files.`);
-      if (CONFIG.ENABLE_HTML_REPORT) {
+      if (CONFIG.ENABLE_HTML_REPORT && !CONFIG.DRY_RUN) {
         _sendJunkDeletedReportHtml(deletedItems);
       }
     } else {
@@ -275,6 +286,10 @@ function _getState(baseFolder) {
 }
 
 function _saveState(baseFolder, state) {
+  if (CONFIG.DRY_RUN) {
+    Logger.log('[DRY RUN] Audit state was not written. A later run will restart the audit.');
+    return;
+  }
   const files = baseFolder.getFilesByName(JUNK_STATE_FILENAME);
   if (files.hasNext()) {
     files.next().setContent(JSON.stringify(state));
@@ -284,9 +299,25 @@ function _saveState(baseFolder, state) {
 }
 
 function _deleteState(baseFolder) {
+  if (CONFIG.DRY_RUN) {
+    Logger.log('[DRY RUN] Existing audit state was not deleted.');
+    return;
+  }
   const files = baseFolder.getFilesByName(JUNK_STATE_FILENAME);
   if (files.hasNext()) {
     files.next().setTrashed(true);
+  }
+}
+
+/** Opens the configured audit sheet without creating any Drive/Sheets objects. */
+function _getExistingJunkAuditSheet() {
+  if (!CONFIG.DASHBOARD_SPREADSHEET_ID) return null;
+  try {
+    const spreadsheet = SpreadsheetApp.openById(CONFIG.DASHBOARD_SPREADSHEET_ID);
+    return spreadsheet.getSheetByName(CONFIG.JUNK_FILE_RULES.JUNK_AUDIT_SHEET_NAME);
+  } catch (error) {
+    Logger.log(`Could not open existing Junk Audit sheet: ${error}`);
+    return null;
   }
 }
 

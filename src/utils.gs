@@ -63,6 +63,23 @@ function extractLocalPart(email) {
   return atIndex !== -1 ? email.substring(0, atIndex) : email;
 }
 
+/** Extracts the lowercase domain portion of an email address. */
+function extractEmailDomain(email) {
+  const cleanEmail = extractEmailAddress(String(email || '')).toLowerCase().trim();
+  const atIndex = cleanEmail.lastIndexOf('@');
+  return atIndex === -1 ? '' : cleanEmail.substring(atIndex + 1);
+}
+
+/** True when the sender domain equals or is a subdomain of a protected domain. */
+function isProtectedSenderEmail(email, protectedDomains) {
+  const domain = extractEmailDomain(email);
+  if (!domain) return false;
+  return (protectedDomains || []).some(function (protectedDomain) {
+    const expected = String(protectedDomain || '').toLowerCase().replace(/^@/, '').trim();
+    return expected && (domain === expected || domain.endsWith(`.${expected}`));
+  });
+}
+
 /**
  * Formats a key-value pair as a padded log line for the text-mode report.
  * Uses middle-dot (·) characters to fill the space between label and value.
@@ -214,18 +231,141 @@ function determineCategory(subject, senderEmail, filename) {
     return 'Otros';
   }
   
-  const searchString = `${subject} ${senderEmail} ${filename}`.toLowerCase();
+  const searchString = normalizeForMatching(`${subject} ${senderEmail} ${filename}`);
   
   for (let i = 0; i < CONFIG.CATEGORIES.length; i++) {
     const category = CONFIG.CATEGORIES[i];
     for (let j = 0; j < category.keywords.length; j++) {
-      if (searchString.indexOf(category.keywords[j].toLowerCase()) !== -1) {
+      if (containsCategoryKeyword(searchString, category.keywords[j])) {
         return category.name;
       }
     }
   }
   
   return CONFIG.DEFAULT_CATEGORY || 'Otros';
+}
+
+/** Lowercases and removes diacritics so "titulación" and "titulacion" match. */
+function normalizeForMatching(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+/**
+ * Uses token boundaries for short codes (SAT, SAR, XML, CV, etc.) to avoid
+ * accidental matches inside unrelated words while keeping phrase matching fast.
+ */
+function containsCategoryKeyword(normalizedSearchText, keyword) {
+  const normalizedKeyword = normalizeForMatching(keyword).trim();
+  if (!normalizedKeyword) return false;
+  if (/^[a-z0-9]+$/.test(normalizedKeyword) && normalizedKeyword.length <= 3) {
+    const escaped = normalizedKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(normalizedSearchText);
+  }
+  return normalizedSearchText.indexOf(normalizedKeyword) !== -1;
+}
+
+/** True when a subject contains a configured security/transaction phrase. */
+function isProtectedAutomationSubject(subject, protectedPhrases) {
+  const normalizedSubject = normalizeForMatching(subject);
+  return (protectedPhrases || []).some(function (phrase) {
+    const normalizedPhrase = normalizeForMatching(phrase).trim();
+    return normalizedPhrase && normalizedSubject.indexOf(normalizedPhrase) !== -1;
+  });
+}
+
+/**
+ * Returns the first matching financial subcategory for one or more subjects.
+ * Subcategories are deliberately ordered from the most safety-sensitive and
+ * specific to the broadest. The final fallback entry may set `fallback: true`.
+ *
+ * @param {string} subjectText One subject or several thread subjects joined.
+ * @param {Array<{name: string, phrases?: string[], fallback?: boolean}>} subcategories
+ * @returns {string}
+ */
+function classifyFinancialSubject(subjectText, subcategories) {
+  const normalizedSubject = normalizeForMatching(subjectText);
+  const configured = subcategories || [];
+  let fallbackName = 'Otros';
+
+  for (let i = 0; i < configured.length; i++) {
+    const subcategory = configured[i];
+    if (subcategory.fallback) {
+      fallbackName = subcategory.name || fallbackName;
+      continue;
+    }
+    const phrases = subcategory.phrases || [];
+    if (phrases.some(function (phrase) {
+      return containsCategoryKeyword(normalizedSubject, phrase);
+    })) {
+      return subcategory.name;
+    }
+  }
+  return fallbackName;
+}
+
+// =============================================================================
+// SAFE MAILBOX ACTION DECISION
+// =============================================================================
+
+/**
+ * Decides what may safely happen to a Gmail thread after attachment processing.
+ * This function is intentionally pure so the data-loss guard can be unit-tested.
+ *
+ * @param {Object} input Processing summary and date thresholds.
+ * @returns {{action: string, reason: string}}
+ */
+function decideThreadAction(input) {
+  if (input.newestMessageDate >= input.archiveDate) {
+    return { action: 'skip', reason: 'thread_has_recent_messages' };
+  }
+  if (input.excludedMessages > 0) {
+    return { action: 'review', reason: 'excluded_sender' };
+  }
+  if (input.failedAttachments > 0) {
+    return { action: 'review', reason: 'attachment_backup_failed' };
+  }
+  if (input.eligibleAttachments === 0) {
+    return { action: 'review', reason: 'no_archivable_attachments' };
+  }
+  if (input.completedAttachments !== input.eligibleAttachments) {
+    return { action: 'review', reason: 'attachment_backup_incomplete' };
+  }
+  if (input.newestMessageDate < input.deleteDate && input.protectedThread) {
+    return { action: 'archive_keep', reason: 'protected_thread' };
+  }
+  if (input.newestMessageDate < input.deleteDate) {
+    return { action: 'trash', reason: 'backup_verified_and_expired' };
+  }
+  return { action: 'archive_keep', reason: 'backup_verified' };
+}
+
+/**
+ * Safety gate for a periodic inbox rule. Priority rules may label freely, while
+ * low-value actions are reduced to label-only when any protection signal exists.
+ */
+function decideInboxRuleAction(input) {
+  if (!input.archive) {
+    return { action: 'label_only', reason: input.lowValue ? 'low_value_rule' : 'priority_rule' };
+  }
+  if (input.hasRealAttachments) {
+    return { action: 'label_only', reason: 'real_attachment' };
+  }
+  if (input.protectedThread) {
+    return { action: 'label_only', reason: 'protected_thread' };
+  }
+  if (input.protectedSender) {
+    return { action: 'label_only', reason: 'protected_sender' };
+  }
+  if (input.protectedContent && !input.allowProtectedContentArchive) {
+    return { action: 'label_only', reason: 'protected_content' };
+  }
+  return {
+    action: 'archive',
+    reason: input.record ? 'record_rule' : (input.lowValue ? 'low_value_rule' : 'archive_rule'),
+  };
 }
 
 // =============================================================================
@@ -239,6 +379,8 @@ if (typeof module !== 'undefined') {
     extractEmailAddress,
     extractDisplayName,
     extractLocalPart,
+    extractEmailDomain,
+    isProtectedSenderEmail,
     pad,
     getDateString,
     getYearString,
@@ -247,5 +389,11 @@ if (typeof module !== 'undefined') {
     parseOldFilename,
     getFriendlySenderName,
     determineCategory,
+    normalizeForMatching,
+    containsCategoryKeyword,
+    isProtectedAutomationSubject,
+    classifyFinancialSubject,
+    decideThreadAction,
+    decideInboxRuleAction,
   };
 }

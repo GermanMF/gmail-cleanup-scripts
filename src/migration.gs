@@ -33,14 +33,14 @@ function migrateEmailFoldersToDisplayName() {
       Logger.log(`  Display name: "${displayName}"`);
 
       // Build target: DisplayName / email@domain.com /
-      const displayFolder = getOrCreateFolder(baseFolder, sanitizeFilename(displayName));
-      const newEmailFolder = getOrCreateFolder(displayFolder, sanitizeFilename(emailAddress));
+      const displayFolder = CONFIG.DRY_RUN ? null : getOrCreateFolder(baseFolder, sanitizeFilename(displayName));
+      const newEmailFolder = CONFIG.DRY_RUN ? null : getOrCreateFolder(displayFolder, sanitizeFilename(emailAddress));
 
       // Move each year subfolder's files into the new location
       const yearFolders = emailFolder.getFolders();
       while (yearFolders.hasNext()) {
         const yearFolder = yearFolders.next();
-        const newYearFolder = getOrCreateFolder(newEmailFolder, yearFolder.getName());
+        const newYearFolder = CONFIG.DRY_RUN ? null : getOrCreateFolder(newEmailFolder, yearFolder.getName());
         const filesIter = yearFolder.getFiles();
         const filesToMove = [];
         while (filesIter.hasNext()) {
@@ -176,8 +176,8 @@ function migrateFile(file, baseFolder) {
     const year = dateStr.substring(0, 4);
 
     // Build new target: baseFolder / senderEmail / YYYY /
-    const senderFolder = getOrCreateFolder(baseFolder, sanitizeFilename(senderEmail));
-    const yearFolder = getOrCreateFolder(senderFolder, year);
+    const senderFolder = CONFIG.DRY_RUN ? null : getOrCreateFolder(baseFolder, sanitizeFilename(senderEmail));
+    const yearFolder = CONFIG.DRY_RUN ? null : getOrCreateFolder(senderFolder, year);
 
     // Build new filename: YYYYMMDD_localpart_restofname
     const newName = `${dateStr}_${sanitizeFilename(senderLocal)}_${restOfName}`;
@@ -377,27 +377,27 @@ function migrateFileToCategory(file, baseFolder) {
     Logger.log(`         from : ${currentPath}`);
     Logger.log(`         to   : ${targetPath}`);
 
+    if (CONFIG.DRY_RUN) {
+      Logger.log(`         [DRY RUN] Would move → ${targetPath}`);
+      return 'moved';
+    }
+
     const catFolder      = getOrCreateFolder(baseFolder, sanitizeFilename(category));
     const friendlyFolder = getOrCreateFolder(catFolder, sanitizeFilename(friendlyName));
     const destYearFolder = getOrCreateFolder(friendlyFolder, yearName);
 
-    if (fileExistsInFolder(destYearFolder, filename)) {
-      Logger.log(`         → DUPLICATE at destination — trashing source.`);
-      if (!CONFIG.DRY_RUN) {
-        file.setTrashed(true);
-      } else {
-        Logger.log(`         [DRY RUN] Would trash duplicate source.`);
-      }
+    const sourceBlob = file.getBlob();
+    if (findVerifiedDuplicate(destYearFolder, filename, sourceBlob)) {
+      Logger.log(`         → CONTENT-VERIFIED DUPLICATE at destination — trashing source.`);
+      file.setTrashed(true);
       return 'dup';
     }
 
-    if (CONFIG.DRY_RUN) {
-      Logger.log(`         [DRY RUN] Would move → ${targetPath}`);
-    } else {
-      destYearFolder.addFile(file);
-      yearFolder.removeFile(file);
-      Logger.log(`         → MOVED ✓`);
-    }
+    const destinationName = getCollisionSafeFilename(destYearFolder, filename, sourceBlob);
+    destYearFolder.addFile(file);
+    yearFolder.removeFile(file);
+    if (destinationName !== filename) file.setName(destinationName);
+    Logger.log(`         → MOVED ✓`);
     return 'moved';
 
   } catch (error) {
@@ -456,7 +456,7 @@ function removeDuplicatesInFolder(folder, startTime) {
   let trashedCount = 0;
   try {
     const files = folder.searchFiles('trashed = false');
-    const seenNames = new Set();
+    const fingerprintsByName = {};
 
     const toTrash = [];
 
@@ -464,10 +464,16 @@ function removeDuplicatesInFolder(folder, startTime) {
       const file = files.next();
       const name = file.getName();
 
-      if (seenNames.has(name)) {
+      const fingerprint = `${file.getSize()}:${getBlobFingerprint(file.getBlob())}`;
+      if (!fingerprintsByName[name]) fingerprintsByName[name] = new Set();
+
+      if (fingerprintsByName[name].has(fingerprint)) {
         toTrash.push(file);
       } else {
-        seenNames.add(name);
+        if (fingerprintsByName[name].size > 0) {
+          Logger.log(`    Name collision kept (different content): ${name}`);
+        }
+        fingerprintsByName[name].add(fingerprint);
       }
     }
 
@@ -476,8 +482,12 @@ function removeDuplicatesInFolder(folder, startTime) {
         Logger.log(`    Timeout approaching! Stopping early in folder: ${folder.getName()}`);
         break;
       }
-      Logger.log(`    Trashing duplicate: ${toTrash[i].getName()} (ID: ${toTrash[i].getId()})`);
-      toTrash[i].setTrashed(true);
+      if (CONFIG.DRY_RUN) {
+        Logger.log(`    [DRY RUN] Would trash duplicate: ${toTrash[i].getName()} (ID: ${toTrash[i].getId()})`);
+      } else {
+        Logger.log(`    Trashing verified duplicate: ${toTrash[i].getName()} (ID: ${toTrash[i].getId()})`);
+        toTrash[i].setTrashed(true);
+      }
       trashedCount++;
     }
   } catch (error) {
@@ -534,7 +544,11 @@ function deleteOrphanedEmptyFolders() {
 
       if (fileCount === 0) {
         Logger.log(`[TRASH]   "${folderName}" — orphaned & empty, trashing.`);
-        folder.setTrashed(true);
+        if (CONFIG.DRY_RUN) {
+          Logger.log(`          [DRY RUN] Folder kept.`);
+        } else {
+          folder.setTrashed(true);
+        }
         trashedCount++;
       } else {
         Logger.log(`[WARNING] "${folderName}" — orphaned but has ${fileCount} file(s). NOT trashed. Investigate manually.`);
@@ -585,7 +599,11 @@ function countFilesRecursive(folder) {
 function validateNoDuplicates() {
   const startTime = Date.now();
   try {
-    const baseFolder      = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    const baseFolder      = getExistingFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    if (!baseFolder) {
+      Logger.log('Archive folder not found. Nothing to validate.');
+      return;
+    }
     const categoryFolders = baseFolder.getFolders();
     let totalDuplicates   = 0;
     let foldersScanned    = 0;
@@ -692,7 +710,11 @@ function auditPendingMigration() {
   const MAX_SAMPLES = 5; // sample filenames per sub-folder
 
   try {
-    const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    const baseFolder = getExistingFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    if (!baseFolder) {
+      Logger.log('Archive folder not found. Nothing to audit.');
+      return;
+    }
 
     // Build the set of valid category names (case-insensitive)
     const validCategories = new Set(
@@ -829,7 +851,11 @@ function auditArchiveStructure() {
   const MAX_SAMPLES_PER_SENDER = 3;
 
   try {
-    const baseFolder = getOrCreateFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    const baseFolder = getExistingFolder(DriveApp.getRootFolder(), CONFIG.BASE_FOLDER_NAME);
+    if (!baseFolder) {
+      Logger.log('Archive folder not found. Nothing to audit.');
+      return;
+    }
     Logger.log('====== ARCHIVE AUDIT START ======');
     Logger.log(`Archive root: "${CONFIG.BASE_FOLDER_NAME}"`);
     Logger.log('');

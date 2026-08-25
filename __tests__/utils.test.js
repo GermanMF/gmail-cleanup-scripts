@@ -14,6 +14,8 @@ const {
   extractEmailAddress,
   extractDisplayName,
   extractLocalPart,
+  extractEmailDomain,
+  isProtectedSenderEmail,
   pad,
   getDateString,
   getYearString,
@@ -22,6 +24,12 @@ const {
   parseOldFilename,
   getFriendlySenderName,
   determineCategory,
+  normalizeForMatching,
+  containsCategoryKeyword,
+  isProtectedAutomationSubject,
+  classifyFinancialSubject,
+  decideThreadAction,
+  decideInboxRuleAction,
 } = require('../src/utils.gs');
 
 // =============================================================================
@@ -138,6 +146,83 @@ describe('extractLocalPart', () => {
   test('uses only the first @ for addresses with multiple @ signs', () => {
     // Edge case — not a valid email, but should not throw
     expect(extractLocalPart('a@b@c')).toBe('a');
+  });
+});
+
+describe('protected sender domains', () => {
+  test('extracts a lowercase domain from a formatted sender', () => {
+    expect(extractEmailDomain('Bank <Alerts@Envio.Santander.com.mx>')).toBe('envio.santander.com.mx');
+  });
+
+  test('protects subdomains of a configured financial domain', () => {
+    expect(isProtectedSenderEmail(
+      'alerts@envio.santander.com.mx',
+      ['santander.com.mx']
+    )).toBe(true);
+  });
+
+  test('does not protect a lookalike suffix domain', () => {
+    expect(isProtectedSenderEmail(
+      'offers@fakesantander.com.mx',
+      ['santander.com.mx']
+    )).toBe(false);
+  });
+});
+
+describe('protected automation subjects', () => {
+  const phrases = [
+    'codigo de verificacion',
+    'codigo de un solo uso',
+    'estado de cuenta',
+    'two-factor authentication',
+  ];
+
+  test('matches case and accent-insensitively', () => {
+    expect(isProtectedAutomationSubject('Tu CÓDIGO de verificación', phrases)).toBe(true);
+  });
+
+  test('protects financial and security notifications', () => {
+    expect(isProtectedAutomationSubject('Ya está disponible tu estado de cuenta', phrases)).toBe(true);
+    expect(isProtectedAutomationSubject('Enabling two-factor authentication (2FA)', phrases)).toBe(true);
+    expect(isProtectedAutomationSubject('Este es tu código de un solo uso', phrases)).toBe(true);
+  });
+
+  test('does not protect an unrelated promotion', () => {
+    expect(isProtectedAutomationSubject('Mid-Season Sale is ending soon', phrases)).toBe(false);
+  });
+});
+
+describe('financial subject subcategories', () => {
+  const subcategories = [
+    { name: 'Seguridad', phrases: ['codigo', 'verificacion', 'no reconoces'] },
+    { name: 'Hipoteca', phrases: ['hipoteca', 'credito hipotecario'] },
+    { name: 'Estados de cuenta', phrases: ['estado de cuenta'] },
+    { name: 'Pagos y vencimientos', phrases: ['fecha limite', 'pago minimo'] },
+    { name: 'Transacciones', phrases: ['transferencia', 'compra', 'cargo'] },
+    { name: 'Otros', fallback: true },
+  ];
+
+  test('gives security precedence over purchase language', () => {
+    expect(classifyFinancialSubject(
+      '8037 es tu código de verificación de compra',
+      subcategories
+    )).toBe('Seguridad');
+  });
+
+  test('gives mortgage precedence over generic payment language', () => {
+    expect(classifyFinancialSubject(
+      'Confirmación de pago de tu crédito hipotecario',
+      subcategories
+    )).toBe('Hipoteca');
+  });
+
+  test.each([
+    ['Tu estado de cuenta ya está disponible', 'Estados de cuenta'],
+    ['Tu fecha límite de pago se acerca', 'Pagos y vencimientos'],
+    ['Transferencia exitosa', 'Transacciones'],
+    ['Información general para clientes', 'Otros'],
+  ])('classifies "%s" as %s', (subject, expected) => {
+    expect(classifyFinancialSubject(subject, subcategories)).toBe(expected);
   });
 });
 
@@ -376,5 +461,148 @@ describe('determineCategory', () => {
 
   test('returns default category if no match', () => {
     expect(determineCategory('Hola', 'amigo@test.com', 'foto.jpg')).toBe('Otros');
+  });
+});
+
+describe('category keyword matching', () => {
+  test('matches accented and unaccented text consistently', () => {
+    expect(normalizeForMatching('Titulación')).toBe('titulacion');
+    expect(containsCategoryKeyword(normalizeForMatching('Proceso de titulación'), 'titulacion')).toBe(true);
+  });
+
+  test('does not match a short code inside another word', () => {
+    expect(containsCategoryKeyword(normalizeForMatching('Saturday sale'), 'sat')).toBe(false);
+  });
+
+  test('matches a short code as its own token', () => {
+    expect(containsCategoryKeyword(normalizeForMatching('Constancia del SAT 2026'), 'sat')).toBe(true);
+  });
+});
+
+// =============================================================================
+// decideThreadAction — data-loss guard
+// =============================================================================
+
+describe('decideThreadAction', () => {
+  const archiveDate = new Date('2026-05-01T00:00:00Z');
+  const deleteDate = new Date('2026-02-01T00:00:00Z');
+
+  function input(overrides) {
+    return Object.assign({
+      newestMessageDate: new Date('2026-03-01T00:00:00Z'),
+      archiveDate,
+      deleteDate,
+      eligibleAttachments: 2,
+      completedAttachments: 2,
+      failedAttachments: 0,
+      excludedMessages: 0,
+      protectedThread: false,
+    }, overrides);
+  }
+
+  test('keeps mixed/recent threads completely untouched', () => {
+    expect(decideThreadAction(input({ newestMessageDate: archiveDate }))).toEqual({
+      action: 'skip', reason: 'thread_has_recent_messages'
+    });
+  });
+
+  test('routes excluded senders to review', () => {
+    expect(decideThreadAction(input({ excludedMessages: 1 })).action).toBe('review');
+  });
+
+  test('never trashes a thread when one attachment failed', () => {
+    expect(decideThreadAction(input({
+      newestMessageDate: new Date('2025-01-01T00:00:00Z'),
+      failedAttachments: 1,
+      completedAttachments: 1,
+    }))).toEqual({ action: 'review', reason: 'attachment_backup_failed' });
+  });
+
+  test('routes threads with no real attachments to review', () => {
+    expect(decideThreadAction(input({
+      eligibleAttachments: 0,
+      completedAttachments: 0,
+    })).reason).toBe('no_archivable_attachments');
+  });
+
+  test('detects an incomplete backup even without a thrown error', () => {
+    expect(decideThreadAction(input({ completedAttachments: 1 }))).toEqual({
+      action: 'review', reason: 'attachment_backup_incomplete'
+    });
+  });
+
+  test('trashes an expired thread only after a complete verified backup', () => {
+    expect(decideThreadAction(input({
+      newestMessageDate: new Date('2025-01-01T00:00:00Z'),
+    })).action).toBe('trash');
+  });
+
+  test('keeps a protected expired thread after archiving its attachments', () => {
+    expect(decideThreadAction(input({
+      newestMessageDate: new Date('2025-01-01T00:00:00Z'),
+      protectedThread: true,
+    }))).toEqual({ action: 'archive_keep', reason: 'protected_thread' });
+  });
+});
+
+describe('decideInboxRuleAction', () => {
+  test('allows a priority rule to keep and label a thread', () => {
+    expect(decideInboxRuleAction({ lowValue: false, archive: false })).toEqual({
+      action: 'label_only', reason: 'priority_rule'
+    });
+  });
+
+  test('allows safe low-value mail to be archived', () => {
+    expect(decideInboxRuleAction({
+      lowValue: true,
+      archive: true,
+      hasRealAttachments: false,
+      protectedThread: false,
+      protectedSender: false,
+      protectedContent: false,
+    })).toEqual({ action: 'archive', reason: 'low_value_rule' });
+  });
+
+  test.each([
+    ['real attachment', { hasRealAttachments: true }, 'real_attachment'],
+    ['protected thread', { protectedThread: true }, 'protected_thread'],
+    ['protected sender', { protectedSender: true }, 'protected_sender'],
+    ['protected content', { protectedContent: true }, 'protected_content'],
+  ])('blocks low-value archive for a %s', (_, override, reason) => {
+    const input = Object.assign({
+      lowValue: true,
+      archive: true,
+      hasRealAttachments: false,
+      protectedThread: false,
+      protectedSender: false,
+      protectedContent: false,
+    }, override);
+    expect(decideInboxRuleAction(input)).toEqual({ action: 'label_only', reason });
+  });
+
+  test('archives a trusted record despite known record-content phrases', () => {
+    expect(decideInboxRuleAction({
+      record: true,
+      lowValue: false,
+      archive: true,
+      hasRealAttachments: false,
+      protectedThread: false,
+      protectedSender: false,
+      protectedContent: true,
+      allowProtectedContentArchive: true,
+    })).toEqual({ action: 'archive', reason: 'record_rule' });
+  });
+
+  test('still blocks a trusted record when it has a real attachment', () => {
+    expect(decideInboxRuleAction({
+      record: true,
+      lowValue: false,
+      archive: true,
+      hasRealAttachments: true,
+      protectedThread: false,
+      protectedSender: false,
+      protectedContent: true,
+      allowProtectedContentArchive: true,
+    })).toEqual({ action: 'label_only', reason: 'real_attachment' });
   });
 });

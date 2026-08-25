@@ -2,6 +2,261 @@
  * Configuration object for the Gmail Attachment Processor.
  * Modify these settings to adjust the script's behavior.
  */
+const FINANCIAL_INSTITUTIONS = [
+  { name: 'Santander', query: '{from:santander.com.mx from:envio.santander.com.mx}' },
+  { name: 'Banamex', query: '{from:banamex.com from:citibanamex.com}' },
+  { name: 'BBVA', query: '{from:bbva.com from:bbva.com.mx}' },
+  { name: 'Invex', query: 'from:invextarjetas.com.mx' },
+  { name: 'GBM', query: 'from:gbm.com.mx' },
+  { name: 'Mercado Pago', query: 'from:mercadopago.com.mx' },
+  { name: 'PayPal', query: 'from:paypal.com' },
+  { name: 'Hey Banco', query: '{from:hey.inc from:heybanco.com}' },
+  { name: 'Nu', query: '{from:nu.com.mx from:nubank.com.mx}' },
+  { name: 'Revolut', query: 'from:revolut.com' },
+  { name: 'Uala', query: '{from:uala.com.mx from:abccapital.com.mx}' },
+  { name: 'Openbank', query: 'from:openbank' },
+];
+
+const FINANCIAL_SENDER_QUERY = [
+  '{',
+  'from:santander.com.mx', 'from:envio.santander.com.mx',
+  'from:banamex.com', 'from:citibanamex.com',
+  'from:bbva.com', 'from:bbva.com.mx',
+  'from:invextarjetas.com.mx', 'from:gbm.com.mx',
+  'from:mercadopago.com.mx', 'from:paypal.com',
+  'from:hey.inc', 'from:heybanco.com',
+  'from:nu.com.mx', 'from:nubank.com.mx',
+  'from:revolut.com', 'from:uala.com.mx', 'from:abccapital.com.mx',
+  'from:openbank',
+  '}',
+].join(' ');
+
+/**
+ * Ordered financial sublabels. Security and mortgage phrases precede broader
+ * transaction/payment language so the most meaningful child label wins.
+ */
+const FINANCIAL_SUBLABELS = [
+  {
+    name: 'Seguridad',
+    phrases: [
+      'codigo', 'code', 'verificacion', 'verification', 'inicio de sesion',
+      'nuevo dispositivo', 'contrasena', 'password', 'no reconoces',
+      'no reconocida', 'unrecognized', 'sospechosa', 'suspicious', 'fraude',
+      'bloqueada', 'bloqueo', 'token', 'nip', 'llave de acceso', 'passkey',
+      'forma de iniciar sesion', 'app predeterminada', 'codi activado',
+      'alta un destinatario', 'nuevo destinatario',
+      'autorizacion de operacion que supera el monto limite',
+      'consulta realizada', 'consulta de estado de cuenta',
+    ],
+  },
+  {
+    name: 'Hipoteca',
+    phrases: [
+      'hipoteca', 'hipotecario', 'credito hipotecario', 'amortizacion',
+      'mensualidad hipotecaria', 'pago de hipoteca',
+    ],
+  },
+  {
+    name: 'Créditos',
+    phrases: [
+      'credito personal', 'prestamo', 'financiamiento', 'credito automotriz',
+      'credito disponible', 'linea de credito', 'credit offer',
+    ],
+  },
+  {
+    name: 'Estados de cuenta',
+    requiresStatementEvidence: true,
+    phrases: [
+      'estado de cuenta', 'account statement', 'estado de cuenta integral',
+      'estado de cuenta electronico', 'corte mensual', 'resumen mensual',
+    ],
+  },
+  {
+    name: 'Inversiones',
+    phrases: [
+      'inversion', 'portafolio', 'fondo', 'dividendo', 'rendimiento',
+      'compra de acciones', 'venta de acciones', 'trading', 'afore',
+      'invierte', 'mercados', 'cuenta de inversion',
+    ],
+  },
+  {
+    name: 'Pagos y vencimientos',
+    phrases: [
+      'fecha limite', 'vencimiento', 'pago minimo', 'pago para no generar',
+      'payment due', 'domiciliacion', 'pago', 'payment',
+    ],
+  },
+  {
+    name: 'Transacciones',
+    phrases: [
+      'transferencia', 'spei', 'deposito', 'retiro', 'compra', 'cargo',
+      'transaccion', 'transaction', 'movimiento', 'abono',
+      'autorizacion de operacion', 'confirmamos tu autorizacion',
+      'comprobante de operacion', 'operacion en cajero', 'retiro de efectivo',
+    ],
+  },
+  {
+    name: 'Promociones y beneficios',
+    phrases: [
+      'promocion', 'bonificacion', 'cashback', 'descuento', 'preventa',
+      'oferta', 'recompensa', 'invita a', 'participa', 'registrate',
+      'ultimo dia', 'ganar', 'beneficio', 'meses sin intereses',
+    ],
+  },
+  {
+    name: 'Tarjetas',
+    phrases: [
+      'tarjeta', 'card', 'linea de credito', 'limite de credito',
+      'activacion', 'activada', 'reemplazo',
+    ],
+  },
+  {
+    name: 'Avisos de servicio',
+    phrases: [
+      'aviso de mantenimiento', 'mantenimiento', 'intermitencia',
+      'indisponibilidad', 'actualizacion de terminos',
+      'terminos y condiciones', 'actualizacion de tu cuenta',
+      'notificacion paperless', 'nuevo diseno de tu estado de cuenta',
+      'actualizacion de estado de cuenta',
+      'reenvio de indicaciones importantes',
+    ],
+  },
+  { name: 'Otros', fallback: true },
+];
+
+/**
+ * Bank-specific vocabulary keeps one shared label taxonomy while allowing a
+ * bank's marketing language to take precedence over generic transaction words.
+ */
+const FINANCIAL_INSTITUTION_SUBLABEL_OVERRIDES = {
+  Uala: {
+    phrases: {
+      Inversiones: [
+        'inversionista', 'reserva a plazo', 'paquete recomendado',
+        'ahorros no dejen de ganar', 'ya puedes invertir',
+        'la cuenta se ha creado',
+      ],
+      'Promociones y beneficios': [
+        'un ano de gasolina', 'gasolina gratis', 'tarjetas de regalo',
+        'cada transaccion es una anotacion', 'trae tu nomina',
+        'maximiza tus ingresos', 'participa por',
+      ],
+    },
+    promotionsBeforeTransactions: true,
+  },
+};
+
+function buildFinancialSublabelsForInstitution(institutionName) {
+  const override = FINANCIAL_INSTITUTION_SUBLABEL_OVERRIDES[institutionName];
+  if (!override) return FINANCIAL_SUBLABELS;
+
+  const sublabels = FINANCIAL_SUBLABELS.map(function (subcategory) {
+    const extraPhrases = (override.phrases && override.phrases[subcategory.name]) || [];
+    if (!extraPhrases.length) return subcategory;
+    return Object.assign({}, subcategory, {
+      phrases: extraPhrases.concat(subcategory.phrases || []),
+    });
+  });
+
+  if (override.promotionsBeforeTransactions) {
+    const promotionIndex = sublabels.findIndex(function (subcategory) {
+      return subcategory.name === 'Promociones y beneficios';
+    });
+    const transactionIndex = sublabels.findIndex(function (subcategory) {
+      return subcategory.name === 'Transacciones';
+    });
+    if (promotionIndex > transactionIndex && transactionIndex >= 0) {
+      const promotion = sublabels.splice(promotionIndex, 1)[0];
+      sublabels.splice(transactionIndex, 0, promotion);
+    }
+  }
+  return sublabels;
+}
+
+const FINANCIAL_SEARCH_ACCENT_REPLACEMENTS = [
+  ['codigo', 'código'],
+  ['verificacion', 'verificación'],
+  ['sesion', 'sesión'],
+  ['contrasena', 'contraseña'],
+  ['autorizacion', 'autorización'],
+  ['operacion', 'operación'],
+  ['limite', 'límite'],
+  ['credito', 'crédito'],
+  ['prestamo', 'préstamo'],
+  ['linea', 'línea'],
+  ['electronico', 'electrónico'],
+  ['notificacion', 'notificación'],
+  ['inversion', 'inversión'],
+  ['transaccion', 'transacción'],
+  ['promocion', 'promoción'],
+  ['bonificacion', 'bonificación'],
+  ['registrate', 'regístrate'],
+  ['ultimo dia', 'último día'],
+  ['activacion', 'activación'],
+  ['actualizacion', 'actualización'],
+  ['terminos', 'términos'],
+  ['domiciliacion', 'domiciliación'],
+  ['minimo', 'mínimo'],
+  ['confirmacion', 'confirmación'],
+  ['diseno', 'diseño'],
+  ['nomina', 'nómina'],
+  ['ano', 'año'],
+  ['reenvio', 'reenvío'],
+];
+
+function expandFinancialSearchPhrases(phrases) {
+  const expanded = [];
+  phrases.forEach(function (phrase) {
+    expanded.push(phrase);
+    let accented = phrase;
+    FINANCIAL_SEARCH_ACCENT_REPLACEMENTS.forEach(function (replacement) {
+      accented = accented.split(replacement[0]).join(replacement[1]);
+    });
+    if (accented !== phrase) expanded.push(accented);
+  });
+  return Array.from(new Set(expanded));
+}
+
+function buildFinancialSubjectOrQuery(phrases) {
+  return `{ ${expandFinancialSearchPhrases(phrases).map(function (phrase) {
+    return `subject:"${phrase}"`;
+  }).join(' ')} }`;
+}
+
+const FINANCIAL_ACTION_REQUIRED_PHRASES = [
+  'bloqueada', 'rechazada', 'declinada', 'fallida', 'failed',
+  'saldo negativo', 'negative balance', 'fecha limite', 'vencimiento',
+  'pago pendiente', 'payment due', 'no reconoces', 'no reconocida',
+  'unrecognized', 'sospechosa', 'suspicious', 'fraude', 'verification',
+  'verificacion', 'codigo', 'code',
+];
+const FINANCIAL_ACTION_REQUIRED_QUERY = buildFinancialSubjectOrQuery(
+  FINANCIAL_ACTION_REQUIRED_PHRASES
+);
+
+const FINANCIAL_RECORD_PHRASES = [
+  'estado de cuenta', 'account statement', 'transferencia', 'spei',
+  'deposito', 'retiro', 'compra', 'cargo', 'transaccion', 'transaction',
+  'pago exitoso', 'confirmacion de pago', 'transferencia exitosa',
+  'transferencia enviada',
+];
+const FINANCIAL_RECORD_QUERY = buildFinancialSubjectOrQuery(FINANCIAL_RECORD_PHRASES);
+
+const FINANCIAL_INBOX_RULES = FINANCIAL_INSTITUTIONS.map(function (institution) {
+  return {
+    name: `Bank/${institution.name}`,
+    label: `Auto/Finance/${institution.name}`,
+    query: institution.query,
+    sublabels: buildFinancialSublabelsForInstitution(institution.name),
+    archive: false,
+    markRead: false,
+    markImportant: false,
+    lowValue: false,
+    continueProcessing: true,
+    exclusiveGroup: 'financial-institution',
+  };
+});
+
 const CONFIG = {
   /**
    * Base Gmail search query. The date window is applied automatically on top of this.
@@ -10,10 +265,17 @@ const CONFIG = {
   SEARCH_QUERY: 'has:attachment -in:chats',
   /** Label applied to processed threads to prevent duplicate processing. */
   PROCESSED_LABEL: 'Processed_Drive',
+  /** Label applied when a thread needs manual review instead of deletion. */
+  REVIEW_LABEL: 'Cleanup_Review',
   /** Base Google Drive folder name for the archive root. */
   BASE_FOLDER_NAME: 'Gmail_Attachments_Archive',
-  /** Minimum file size in bytes (10KB) to exclude inline signature images. */
-  MIN_FILE_SIZE_BYTES: 10 * 1024,
+  /**
+   * Minimum size for a real attachment. Keep this at 0: legitimate PDFs can be
+   * smaller than 10 KB. Inline images are excluded using Gmail's attachment API.
+   */
+  MIN_FILE_SIZE_BYTES: 0,
+  /** Exclude MIME parts embedded in the HTML body (logos and signatures). */
+  SKIP_INLINE_IMAGES: true,
   /** Maximum number of threads to process per execution to avoid timeouts. */
   BATCH_SIZE: 50,
   /**
@@ -45,6 +307,12 @@ const CONFIG = {
    * @example ['noreply@spam.com', '@newsletters.co']
    */
   EXCLUDED_SENDERS: [],
+  /** Never trash a thread containing a starred message. */
+  PROTECT_STARRED_THREADS: true,
+  /** Protect Gmail-important threads by default; disable only after reviewing that label. */
+  PROTECT_IMPORTANT_THREADS: true,
+  /** Never trash a conversation that contains a message sent by this account. */
+  PROTECT_SENT_THREADS: true,
   /**
    * Set to true to send an HTML-formatted cleanup report email after each run.
    * The email is sent to REPORT_EMAIL, or the active user's account if left empty.
@@ -382,5 +650,332 @@ const CONFIG = {
    * @type {boolean}
    */
   ENABLE_BATCH_NOTIFICATION: false,
+  /**
+   * Non-document cleanup is deliberately staged, never deleted immediately.
+   * Each policy targets low-value mail without real attachments and excludes
+   * starred/important messages. stageBulkCleanupCandidates() archives and labels
+   * matches for review. The user must manually add BULK_DELETE_LABEL before the
+   * purge function can move anything to Trash.
+   */
+  BULK_REVIEW_LABEL_ROOT: 'Cleanup_Review',
+  BULK_DELETE_LABEL: 'Cleanup_Delete',
+  BULK_CLEANUP_BATCH_SIZE: 100,
+  // SaneBox migration completed in 2026; new cleanup is handled by INBOX_RULES.
+  BULK_CLEANUP_POLICIES: [],
+  /** Number of recent days re-evaluated by the periodic inbox rules. */
+  INBOX_RULE_LOOKBACK_DAYS: 30,
+  /** Low-value threads remain untouched until their newest message is this old. */
+  INBOX_LOW_VALUE_MIN_AGE_DAYS: 7,
+  /** Maximum threads fetched per rule and execution. */
+  INBOX_RULE_BATCH_SIZE: 100,
+  /**
+   * Enables the new delayed archive behavior for trusted records and routine
+   * Updates. Keep false until their labels have been sampled in the live Inbox.
+   */
+  ENABLE_INBOX_RECORD_ARCHIVE: false,
+  /**
+   * Domains that low-value rules may never archive, mark read, or trash.
+   * Financial domains are deliberately absent: bank classifier rules add an
+   * institution label, while transaction subjects receive priority protection.
+   */
+  AUTOMATION_PROTECTED_DOMAINS: [
+    'accounts.google.com',
+    'sat.gob.mx',
+    'imss.gob.mx',
+    'infonavit.gob.mx',
+    'npmjs.com',
+    'npmjs.org',
+  ],
+  /**
+   * Subject phrases that always block low-value archive/Trash actions. Gmail's
+   * Updates category contains banking, sign-in, and purchase notifications, so
+   * these checks are enforced again at runtime instead of trusting categories.
+   */
+  AUTOMATION_PROTECTED_SUBJECT_PHRASES: [
+    'security alert',
+    'alerta de seguridad',
+    'verification code',
+    'codigo de verificacion',
+    'codigo de seguridad',
+    'codigo de un solo uso',
+    'one-time code',
+    'passcode',
+    'new device sign-in',
+    'new sign in',
+    'nuevo inicio de sesion',
+    'inicio de sesion',
+    'two-factor authentication',
+    'autenticacion de dos factores',
+    '2fa',
+    'estado de cuenta',
+    'saldo negativo',
+    'negative balance',
+    'fecha limite de pago',
+    'payment due',
+    'transferencia nacional spei',
+    'confirmacion de transferencia',
+    'transferencia enviada',
+    'transferencia fue exitosa',
+    'deposito a cuenta',
+    'deposito a tarjeta',
+    'deposito a tu cuenta',
+    'retiro/compra con cuenta',
+    'autorizacion de cargo',
+    'transaccion autorizada',
+    'compra autorizada',
+    'cargo autorizado',
+    'tarjeta bloqueada',
+    'tarjeta activada',
+    'confirmacion de pago',
+    'pago exitoso',
+    'servicio de alertas',
+    'order receipt',
+    'recibo de tu pedido',
+    'pedido fue entregado',
+    'pedido con uber eats',
+    'order with uber eats',
+    'ticket digital',
+    'no reconocida',
+    'unrecognized transaction',
+    'actividad sospechosa',
+    'suspicious activity',
+    'security advisory',
+    'security vulnerability',
+    'build failed',
+    'deployment failed',
+    'workflow failed',
+  ],
+  /**
+   * Ordered inbox rules. Institution classifiers are non-terminal so a bank
+   * promotion can receive its bank label and still reach a later low-value rule.
+   * All other rules are first-match-wins.
+   */
+  INBOX_RULES: [
+    ...FINANCIAL_INBOX_RULES,
+    {
+      name: 'Security',
+      label: 'Auto/Priority/Security',
+      query: '{from:accounts.google.com subject:"security alert" subject:seguridad subject:verification subject:verificacion subject:"codigo de seguridad" subject:"inicio de sesion" subject:"new sign in" subject:"nuevo inicio de sesion"}',
+      archive: false,
+      markRead: false,
+      markImportant: true,
+      lowValue: false,
+    },
+    {
+      name: 'Finance/ActionRequired',
+      label: 'Auto/Priority/Finance',
+      query: `${FINANCIAL_SENDER_QUERY} ${FINANCIAL_ACTION_REQUIRED_QUERY}`,
+      archive: false,
+      markRead: false,
+      markImportant: true,
+      lowValue: false,
+    },
+    {
+      name: 'Finance/Records',
+      label: 'Auto/Finance/Records',
+      query: `${FINANCIAL_SENDER_QUERY} ${FINANCIAL_RECORD_QUERY}`,
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: false,
+      record: true,
+      minimumAgeDays: 14,
+      ignoreImportantProtection: true,
+      allowProtectedContentArchive: true,
+      requiresRecordArchiveEnabled: true,
+    },
+    {
+      name: 'Travel/Actionable',
+      label: 'Auto/Review/Updates/Travel',
+      query: '{subject:"check-in" subject:"pase de abordar" subject:"boarding pass" subject:"vuelo se acerca" subject:"flight reminder" subject:"reservation confirmation" subject:"confirmacion de reservacion" subject:itinerario subject:reservacion}',
+      archive: false,
+      markRead: false,
+      markImportant: true,
+      lowValue: false,
+    },
+    {
+      name: 'Developer/Security',
+      label: 'Auto/Priority/Developer Security',
+      query: '{subject:"security advisory" subject:"security vulnerability" subject:CVE subject:"dependabot alert"}',
+      archive: false,
+      markRead: false,
+      markImportant: true,
+      lowValue: false,
+    },
+    {
+      name: 'Developer/Failures',
+      label: 'Auto/Review/Developer/Failures',
+      query: '{subject:"build failed" subject:"deployment failed" subject:"workflow failed" subject:"pipeline failed"}',
+      archive: false,
+      markRead: false,
+      markImportant: true,
+      lowValue: false,
+    },
+    {
+      name: 'Documents',
+      label: 'Auto/Documents/Attachments',
+      query: 'has:attachment',
+      archive: false,
+      markRead: false,
+      markImportant: false,
+      lowValue: false,
+      continueProcessing: true,
+    },
+    {
+      name: 'Receipts',
+      label: 'Auto/Documents/Receipts',
+      query: '{subject:factura subject:recibo subject:invoice subject:receipt subject:comprobante}',
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: false,
+      record: true,
+      minimumAgeDays: 14,
+      ignoreImportantProtection: true,
+      allowProtectedContentArchive: true,
+      requiresRecordArchiveEnabled: true,
+    },
+    {
+      name: 'Orders/Records',
+      label: 'Auto/Documents/Orders',
+      query: '{subject:pedido subject:"order confirmation" subject:"your order" subject:"pedido fue entregado" subject:"order delivered" subject:"shipment delivered"}',
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: false,
+      record: true,
+      minimumAgeDays: 14,
+      ignoreImportantProtection: true,
+      allowProtectedContentArchive: true,
+      requiresRecordArchiveEnabled: true,
+    },
+    {
+      name: 'Updates/BankMarketing',
+      label: 'Auto/LowValue/Bank Promotions',
+      query: '{from:boletin@invextarjetas.com.mx from:news.paypal.com from:marketingdir@banamex.com from:novedades.uala.com.mx} -has:attachment -is:starred',
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: true,
+      ignoreImportantProtection: true,
+    },
+    {
+      name: 'Updates/Digests',
+      label: 'Auto/LowValue/Digests',
+      query: 'category:updates {from:medium.com from:substack.com from:e.udemymail.com from:digest.bytebytego.com from:newsletter subject:digest subject:newsletter subject:"weekly update" subject:"weekly digest"} -has:attachment -is:starred -is:important',
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: true,
+    },
+    {
+      name: 'Promotions',
+      label: 'Auto/LowValue/Promotions',
+      query: 'category:promotions -has:attachment -is:starred -is:important',
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: true,
+    },
+    {
+      name: 'Social',
+      label: 'Auto/LowValue/Social',
+      query: 'category:social -has:attachment -is:starred -is:important',
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: true,
+    },
+    {
+      name: 'Updates/ActionRequired',
+      label: 'Auto/Priority/Action Required',
+      query: 'category:updates {subject:"action required" subject:"accion requerida" subject:"requiere tu atencion" subject:"complete your" subject:"completa tu" subject:"confirm your" subject:"confirma tu" subject:expira subject:expires subject:renovacion subject:renewal subject:failed subject:fallo subject:rechazado}',
+      archive: false,
+      markRead: false,
+      markImportant: true,
+      lowValue: false,
+    },
+    {
+      name: 'Updates/Routine',
+      label: 'Auto/LowValue/Routine Updates',
+      query: 'category:updates -has:attachment -is:starred',
+      archive: true,
+      markRead: true,
+      markImportant: false,
+      lowValue: true,
+      ignoreImportantProtection: true,
+      requiresRecordArchiveEnabled: true,
+    },
+  ],
+
+  /**
+   * Historical Inbox drain. Auditing is read-only. Staging is reversible
+   * (label + archive, never Trash) and requires the exact confirmation token.
+   */
+  INBOX_BACKLOG_BATCH_SIZE: 100,
+  INBOX_BACKLOG_CONFIRMATION: '', // required value: ARCHIVE_INBOX_BACKLOG
+  INBOX_BACKLOG_POLICIES: [
+    {
+      name: 'Routine Updates',
+      label: 'Cleanup_Review/Backlog/Routine Updates',
+      query: 'in:inbox category:updates older_than:30d -has:attachment -is:starred -is:important',
+      markRead: true,
+      allowProtectedContentArchive: false,
+    },
+    {
+      name: 'Receipts',
+      label: 'Cleanup_Review/Backlog/Receipts',
+      requiredSourceLabel: 'Auto/Documents/Receipts',
+      query: 'in:inbox older_than:30d -has:attachment -is:starred -is:important',
+      markRead: true,
+      allowProtectedContentArchive: true,
+    },
+    {
+      name: 'Financial Records',
+      label: 'Cleanup_Review/Backlog/Financial Records',
+      query: `in:inbox older_than:30d -has:attachment -is:starred -is:important ${FINANCIAL_SENDER_QUERY} ${FINANCIAL_RECORD_QUERY}`,
+      markRead: true,
+      allowProtectedContentArchive: true,
+    },
+  ],
+  /** Label-only historical backfill for the institution/type hierarchy. */
+  FINANCIAL_SUBLABEL_BACKFILL_LOOKBACK_DAYS: 3650,
+  FINANCIAL_SUBLABEL_BACKFILL_BATCH_SIZE: 100,
+  FINANCIAL_SUBLABEL_BACKFILL_INTERVAL_MINUTES: 10,
+  FINANCIAL_SUBLABEL_BACKFILL_CONFIRMATION: 'APPLY_FINANCIAL_SUBLABELS',
+  FINANCIAL_LABEL_REPAIR_BATCH_SIZE: 100,
+  FINANCIAL_LABEL_REPAIR_CONFIRMATION: 'REPAIR_FINANCIAL_LABELS',
+  /** Auto-trash remains disabled until auditInboxRuleRetention() is reviewed. */
+  ENABLE_RULE_RETENTION_TRASH: false,
+  RULE_RETENTION_POLICIES: [
+    { label: 'Auto/LowValue/Promotions', olderThanDays: 30 },
+    { label: 'Auto/LowValue/Social', olderThanDays: 90 },
+    { label: 'Auto/LowValue/Digests', olderThanDays: 60 },
+    { label: 'Auto/LowValue/Bank Promotions', olderThanDays: 60 },
+    { label: 'Auto/LowValue/Routine Updates', olderThanDays: 90 },
+  ],
+  /** Batch limit for retention cleanup and manual label emptying. */
+  RULE_RETENTION_BATCH_SIZE: 100,
+  /**
+   * Optional one-label empty operation. Set both fields deliberately, run
+   * emptyConfiguredLowValueLabel(), then clear the confirmation value again.
+   */
+  LOW_VALUE_LABEL_TO_EMPTY: '',
+  EMPTY_LOW_VALUE_CONFIRMATION: '', // required value: TRASH_LOW_VALUE_LABEL
 };
-
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    CONFIG,
+    FINANCIAL_INSTITUTIONS,
+    FINANCIAL_SENDER_QUERY,
+    FINANCIAL_SUBLABELS,
+    FINANCIAL_INSTITUTION_SUBLABEL_OVERRIDES,
+    FINANCIAL_ACTION_REQUIRED_QUERY,
+    FINANCIAL_RECORD_QUERY,
+    FINANCIAL_INBOX_RULES,
+    buildFinancialSublabelsForInstitution,
+    expandFinancialSearchPhrases,
+    buildFinancialSubjectOrQuery,
+  };
+}

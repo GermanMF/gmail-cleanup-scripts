@@ -107,7 +107,7 @@ function generateCleanupReport(title) {
     lines.push('📁  DRIVE ARCHIVE  (' + CONFIG.BASE_FOLDER_NAME + ')');
     lines.push(line);
     if (driveStats.found) {
-      lines.push(pad('Unique senders (top-level folders):', driveStats.senderFolders));
+      lines.push(pad('Archive categories (top-level folders):', driveStats.senderFolders));
       lines.push(pad('Files saved to Drive:', driveStats.totalFiles));
       lines.push(pad('Year folders across all senders:', driveStats.yearFolders));
     } else {
@@ -189,13 +189,13 @@ function getDriveArchiveStats() {
     result.found = true;
     const baseFolder = search.next();
 
-    // Level 1: DisplayName folders
+    // Level 1: category folders
     const displayFolders = baseFolder.getFolders();
     while (displayFolders.hasNext()) {
       const displayFolder = displayFolders.next();
       result.senderFolders++;
 
-      // Level 2: email@domain folders
+      // Level 2: friendly-sender folders
       const emailFolders = displayFolder.getFolders();
       while (emailFolders.hasNext()) {
         const emailFolder = emailFolders.next();
@@ -324,7 +324,7 @@ function buildHtmlReportBody(title, stats, batchResult) {
   const driveRows = stats.driveStats.found
     ? `<tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">Files saved to Drive</td>
          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${stats.driveStats.totalFiles.toLocaleString()}</td></tr>
-       <tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">Unique senders</td>
+       <tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">Archive categories</td>
          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${stats.driveStats.senderFolders}</td></tr>
        <tr><td style="padding:10px 12px;">Year folders</td>
          <td style="padding:10px 12px;text-align:right;font-weight:700;">${stats.driveStats.yearFolders}</td></tr>`
@@ -516,7 +516,7 @@ function updateSpreadsheetDashboard(batchResult) {
       ['', ''],
       ['📁 DRIVE ARCHIVE', ''],
       ['Total Files',       stats.driveStats.totalFiles    || 0],
-      ['Unique Senders',    stats.driveStats.senderFolders || 0],
+      ['Archive Categories', stats.driveStats.senderFolders || 0],
       ['Year Folders',      stats.driveStats.yearFolders   || 0],
     ];
 

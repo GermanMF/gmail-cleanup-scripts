@@ -9,12 +9,12 @@
   "scripts": {
     "push": "clasp push",
     "pull": "clasp pull",
-    "open": "clasp open",
+    "open": "clasp open-script",
     "status": "clasp status",
     "logs": "clasp logs --watch",
     "deploy": "clasp deploy --description \"$(node -e 'console.log(new Date().toISOString())') auto-deploy\"",
     "undeploy": "clasp undeploy --all",
-    "push:dry": "clasp push --dry-run",
+    "push:dry": "clasp status",
     "test": "jest --coverage",
     "test:watch": "jest --watch"
   },

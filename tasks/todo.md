@@ -1,46 +1,41 @@
-# 📋 Gmail Cleanup Scripts — Task Backlog
+# Active Backlog — Gmail Cleanup Scripts
 
-> Tracks upcoming features, improvements, and bugs. Update this file during every dev session.
+Last reviewed: **2026-08-24**
 
----
+This is the authoritative next-work list. Historical accomplishments belong in `tasks/lessons.md` and the Git history.
 
-## 🔴 High Priority
+## High priority — live finance rollout
 
-- [x] **Add `clasp` integration** — wired up. `npm run push/pull/open/status/logs` all work. Script ID configured in `.clasp.json` (gitignored). See `.clasp.json.template` for onboarding.
-- [x] **Unit-testable utility layer** — extract pure functions (string parsing, date logic) into a separate `utils.gs` file with `module.exports` at the bottom to allow running local Node.js unit tests (e.g., via Jest) without needing the GAS runtime.
+Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`. At handover time, finance repair was still ahead of historical child-label backfill.
 
----
+- [ ] Confirm whether `runScheduledFinancialSublabelBackfill` has completed and removed its temporary trigger.
+- [ ] After completion, run the read-only finance repair/backfill audits and record final counts in `docs/HANDOVER.md`.
+- [ ] Sample Ualá child labels after backfill. Verify promotion versus transaction and investment/service examples from `docs/FINANCE_TAXONOMY.md`.
+- [ ] Sample every institution for false `Estados de cuenta` assignments; attachment-less results must contain explicit current-document access/download evidence.
+- [ ] Once the temporary trigger is gone and audits are clean, decide whether to clear the two finance confirmation tokens and deploy that cleanup.
 
-## 🟡 Medium Priority
+## Medium priority — inbox rollout decisions
 
-- [x] **Email notification on completion** — `sendBatchCompletionNotification()` in `reports.gs`. Sends compact HTML email with archived/deleted/skipped counts, exec time, and DRY RUN banner. Opt-in via `CONFIG.ENABLE_BATCH_NOTIFICATION: true`. Uses `REPORT_EMAIL` as recipient.
-- [x] **Dry-run mode** — `DRY_RUN: false` config flag. When `true`, all Drive writes (`createFile`, `addFile`, `removeFile`) and Gmail mutations (`moveToTrash`, `addLabel`, `setTrashed`) are skipped and logged as `[DRY RUN] Would <action>: <target>`. Guards added in `main.gs` and all three migration stages in `migration.gs`.
-- [x] **Attachment deduplication** — before saving, `fileExistsInFolder()` checks if the same filename already exists in the target Drive folder. Skips with log if duplicate detected.
-- [x] **Configurable exclusion list** — `CONFIG.EXCLUDED_SENDERS` accepts exact emails (`'noreply@x.com'`) or full domains (`'@domain.com'`). Checked in `processMessage()` via `isSenderExcluded()`.
+- [ ] Review accumulated `Auto/Finance/Records` and `Auto/LowValue/Routine Updates` samples before changing `ENABLE_INBOX_RECORD_ARCHIVE`.
+- [ ] Run `auditInboxRuleRetention` and review every affected low-value label before considering `ENABLE_RULE_RETENTION_TRASH`.
+- [ ] Re-audit hourly `runInboxRules` duration after finance maintenance completes; normal runs should stay below the lock-contention window.
+- [ ] Add any newly observed bank-specific vocabulary only with real examples and regression tests.
 
----
+## Low priority / deferred
 
-## 🟢 Low Priority / Nice-to-Have
+- [ ] Decide whether the Drive archive should eventually move from My Drive to a Shared Drive.
+- [ ] Revisit multi-account support only if the project moves away from one-account Apps Script execution.
+- [ ] Consider durable Sheets logging for critical trigger summaries if Apps Script execution history is insufficient.
 
-- [x] **HTML report** — generate a richer styled HTML email report instead of plain Logger output.
-- [x] **Spreadsheet dashboard** — write stats to a linked Google Sheet for historical tracking.
-- [ ] **Multi-account support** — investigate if clasp / GAS allows switching between multiple Google accounts programmatically.
+## Recently completed
 
----
-
-## ✅ Completed
-
-- [x] Initial `processGmailAttachments` main loop with date-window policy.
-- [x] `generateCleanupReport` with mailbox stats, top senders, Drive stats.
-- [x] Stage 1 migration: `migrateOldStructure` (flat YYYY → email@domain/YYYY).
-- [x] Stage 2 migration: `migrateEmailFoldersToDisplayName` (email → DisplayName/email).
-- [x] Stage 3 migration: `migrateToIntelligentCategories` (DisplayName/email → Category/FriendlyName).
-- [x] Post-migration cleanup utilities: `cleanUpAllDuplicates`, `auditPendingMigration`, `deleteOrphanedEmptyFolders`.
-- [x] JSDoc on all public functions.
-- [x] README, .gitignore, tasks scaffold.
-- [x] Git repo initialized, pushed to GitHub (`main` + `dev` branches).
-- [x] `CONTEXT.md` added to repo — persistent AI + contributor project overview, committed to `dev`.
-- [x] Knowledge Item (KI) created in AI store — auto-injects project context at every new session start.
-- [x] **Junk file cleanup** — `auditJunkFiles()` and `deleteConfirmedJunkFiles()` with HTML report and Sheets dashboard confirmation added.
-
-- [x] **Multi-account support** — deferred (GAS single-account limitation confirmed by investigation).
+- [x] Deploy shared institution/child finance taxonomy for 12 institutions.
+- [x] Add Ualá-specific promotion and investment vocabulary.
+- [x] Require attachment or explicit access/download evidence for statements.
+- [x] Repair verified Santander statement false positives into Security and Service Notices.
+- [x] Verify the sampled Santander statement label contained document-backed statements and no known false patterns.
+- [x] Add accent-aware, length-chunked historical Gmail queries.
+- [x] Add the locked, ten-minute, self-removing finance repair/backfill trigger.
+- [x] Replace catch-all Updates actionable classification with explicit action-required and routine lanes.
+- [x] Keep automatic retention Trash and delayed record/routine archive disabled during sampling.
+- [x] Add repository handover documentation, `AGENTS.md`, durable knowledge, checklists, and a repo-scoped Codex skill.

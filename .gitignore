@@ -22,6 +22,9 @@ service-account*.json
 .env.*
 !.env.example
 
+# Machine/account-specific operational state
+docs/HANDOVER.local.md
+
 # Editor directories and files
 .idea/
 .vscode/
@@ -45,9 +48,6 @@ coverage/
 # Logs
 *.log
 logs/
-
-# Local workspace metadata (not committed to git)
-tasks/
 
 # Temporary files
 *.tmp

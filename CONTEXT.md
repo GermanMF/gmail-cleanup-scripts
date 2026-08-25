@@ -1,189 +1,181 @@
-# 🗺️ Project Context — Gmail Cleanup Scripts
+# Project Context — Gmail Cleanup Scripts
 
-> **Read this first.** Persistent AI and contributor context for the `gmail-cleanup-scripts` repository.
-> Keep this file updated whenever the architecture, scope, or major decisions change.
-> Last updated: 2026-06-12
+Last architecture update: **2026-08-24**
 
----
+Read this file for the system map. Then read `docs/HANDOVER.md` for live state and `KNOWLEDGE.md` for stable invariants.
 
-## 📌 What this project does
+## Purpose
 
-A **Google Apps Script** suite that keeps a Gmail inbox clean by:
-1. **Archiving** email attachments to Google Drive in a structured folder hierarchy.
-2. **Trashing** old emails from Gmail once their attachments are safely stored.
-3. **Reporting** the current mailbox state (stats, top senders, Drive inventory).
+This Google Apps Script suite manages one Gmail/Drive account through two safety-separated lanes:
 
----
+1. Archive real email attachments to a verified Drive hierarchy, then apply the configured retention policy.
+2. Classify and stage mailbox cleanup using ordered rules, explicit protections, reversible labels, and gated destructive actions.
 
-## 🗂️ Repository Layout
+It also contains reporting, dashboard, migration, duplicate cleanup, and resumable Drive-audit utilities.
 
-```
+## Repository map
+
+```text
 gmail-cleanup-scripts/
-├── cleanup-attachments.gs     ← Main Apps Script — core logic and wrappers
-├── cleanup-junk.gs            ← Junk file analysis and cleanup module
-├── utils.gs                   ← Pure utility functions (shared scope in GAS)
-├── __tests__/                 ← Local Jest test suites
-│   └── utils.test.js          ← 100% coverage tests for utils.gs
-├── appsscript.json            ← GAS manifest (runtime V8, OAuth scopes, timezone)
-├── .clasp.json.template       ← Safe template — copy to .clasp.json and fill Script ID
-├── .clasp.json                ← ⛔ gitignored — real credentials, never commit
-├── .claspignore               ← Files excluded from clasp push
-├── jsconfig.json              ← VS Code type-checking; *.gs + google-apps-script + jest
-├── package.json               ← npm scripts + Jest configuration
-├── .gitignore                 ← excludes node_modules, .clasp.json
-├── CONTEXT.md                 ← This file
-├── README.md                  ← User-facing setup guide & config reference
-├── tasks/
-│   ├── todo.md                ← Active backlog (High / Medium / Low / Done)
-│   └── lessons.md             ← Append-only session lessons log
-└── node_modules/              ← Editor tooling ONLY — never deployed to GAS
+├── AGENTS.md                         automatic Codex repository instructions
+├── CONTEXT.md                        architecture and component map
+├── KNOWLEDGE.md                      stable decisions and invariants
+├── README.md                         user-facing setup and feature guide
+├── .agents/skills/
+│   └── gmail-cleanup-operations/
+│       └── SKILL.md                  repo-scoped operational skill
+├── docs/
+│   ├── HANDOVER.md                   dated live-production snapshot
+│   ├── OPERATIONS.md                 deployment/trigger/recovery runbook
+│   └── FINANCE_TAXONOMY.md           bank labels and statement evidence rules
+├── src/
+│   ├── appsscript.json               GAS manifest and OAuth scopes
+│   ├── main.gs                       verified attachment pipeline
+│   ├── config.gs                     all configuration and rule definitions
+│   ├── inbox-rules.gs                inbox rules, finance repair/backfill, retention
+│   ├── bulk-cleanup.gs               stage/review/confirm mailbox cleanup
+│   ├── cleanup-junk.gs               resumable Drive junk audit/confirmation
+│   ├── migration.gs                  one-time Drive hierarchy migration/cleanup
+│   ├── reports.gs                    logger, email, and Sheets reporting
+│   ├── gas-utils.gs                  GAS-bound helpers
+│   └── utils.gs                      pure/testable utilities
+├── __tests__/
+│   ├── utils.test.js
+│   ├── config.test.js
+│   └── inbox-rules.test.js
+└── tasks/
+    ├── todo.md                       authoritative active backlog
+    ├── checklist.md                  deployment and wrap-up checklists
+    └── lessons.md                    append-only operational lessons
 ```
 
-**Deployment model**: No build step. `cleanup-attachments.gs` is a single flat file. Primary workflow is **`npm run push`** via `clasp` (wired — Script ID configured). Manual copy-paste into the [Google Apps Script editor](https://script.google.com) remains as a fallback.
+All `.gs` files share the Apps Script global scope. There are no runtime imports or build artifacts.
 
----
+## Deployment model
 
-## ⚙️ CONFIG Object (top of `cleanup-attachments.gs`)
+- Local source root: `src/`
+- Remote Apps Script project ID: stored only in ignored `.clasp.json` and optional `docs/HANDOVER.local.md`
+- Primary branch: `dev`
+- Deploy: `npm run push`
+- Open editor: `npm run open` (`clasp open-script`)
+- Test: `npm test -- --runInBand`
+- Preview included GAS files: `npm run status`
 
-| Key | Default | Purpose |
-|---|---|---|
-| `SEARCH_QUERY` | `'has:attachment -in:chats'` | Base Gmail search query |
-| `PROCESSED_LABEL` | `'Processed_Drive'` | Label applied after archiving (dedup guard) |
-| `BASE_FOLDER_NAME` | `'Gmail_Attachments_Archive'` | Root folder in user's My Drive |
-| `MIN_FILE_SIZE_BYTES` | `10240` (10 KB) | Skip inline signature images |
-| `BATCH_SIZE` | `50` | Threads per execution (6-min wall-clock safety valve) |
-| `ARCHIVE_AFTER_MONTHS` | `3` | Emails older than this are eligible to archive |
-| `DELETE_AFTER_MONTHS` | `6` | Emails older than this are also trashed after archiving |
-| `MAX_COUNT_PER_QUERY` | `500` | Safety cap for `countThreads` pagination |
-| `EXCLUDED_SENDERS` | `[]` | Skip exact emails or full domains (e.g. `'@domain.com'`) |
-| `SENDER_ALIASES` | `{...}` | Map email/domain → friendly display name for Drive folders |
-| `CATEGORIES` | `[...]` | Ordered keyword rules for intelligent Drive categorization |
-| `DEFAULT_CATEGORY` | `'Otros'` | Fallback category when no rule matches |
-| `ENABLE_HTML_REPORT` | `false` | Send full HTML report email after run |
-| `REPORT_EMAIL` | `''` | Recipient for HTML/notification emails (defaults to running account) |
-| `ENABLE_DASHBOARD` | `false` | Append run stats to a Google Sheets dashboard |
-| `DASHBOARD_SPREADSHEET_ID` | `''` | Spreadsheet ID for the dashboard (auto-created on first run) |
-| `DRY_RUN` | `false` | When `true`, log planned actions without writing to Drive or Gmail |
-| `ENABLE_BATCH_NOTIFICATION` | `false` | Send compact HTML summary email at end of each batch run |
+The real `.clasp.json` is ignored and must be recreated on a new computer from `.clasp.json.template`; obtain the Script ID through a private channel or the Apps Script UI.
 
----
+## Attachment retention lane
 
-## 🪟 Date-Window Policy
+Date policy uses the newest message in a thread:
 
-```
-NOW
- │
- ├── < 3 months old    → ✅  UNTOUCHED — skipped entirely
- ├── 3–6 months old   → 📁  Archive attachments to Drive + apply Processed_Drive label
- └── > 6 months old   → 📁  Archive attachments to Drive + moveToTrash()
+```text
+< 3 months    untouched
+3–6 months   verified Drive archive; Gmail retained
+> 6 months   verified Drive archive; Gmail moved to Trash
 ```
 
-Decision is based on the **newest message date** in each thread.
+Target Drive hierarchy:
 
----
-
-## 📁 Drive Folder Hierarchy
-
-```
+```text
 Gmail_Attachments_Archive/
-└── Category/             (e.g., Facturas, Estados de Cuenta, etc.)
-    └── FriendlyName/     (e.g., Uber, Amazon, BBVA)
+└── Category/
+    └── FriendlyName/
         └── YYYY/
             └── YYYYMMDD_localpart_OriginalFilename.ext
 ```
 
----
+Core safety behavior:
 
-## 🔧 Function Map
+- Non-inline attachments are preserved regardless of small size.
+- Saved files are verified by content; identical duplicates are reused.
+- Same-name/different-content collisions receive deterministic suffixes.
+- Any failure or ambiguity blocks Gmail deletion and sends the thread to review.
 
-### Entry Points
+## Inbox automation lane
 
-| Function | Safe? | Description |
-|---|---|---|
-| `processGmailAttachments()` | ⚠️ Destructive | Main loop — archive + label/trash. Prints pre/post reports. |
-| `generateCleanupReport(title?)` | ✅ Read-only | Stats snapshot to Logger. Run anytime. |
-| `migrateOldStructure()` | ⚠️ One-time | Stage 1: old `YYYY/MM_Month/` → `email@domain/YYYY/` |
-| `migrateEmailFoldersToDisplayName()` | ⚠️ One-time | Stage 2: `email@domain/` → `DisplayName/email/` |
-| `migrateToIntelligentCategories()` | ⚠️ One-time | Stage 3: → `Category/FriendlyName/YYYY/` |
-| `auditPendingMigration()` | ✅ Read-only | Lists all folders NOT yet in a valid category |
-| `cleanUpAllDuplicates()` | ⚠️ Destructive | Trashes duplicate files in the archive (30-day recovery window) |
-| `validateNoDuplicates()` | ✅ Read-only | Verifies no duplicates remain after cleanup |
-| `deleteOrphanedEmptyFolders()` | ⚠️ Destructive | Trashes empty legacy folders that are no longer valid categories |
-| `auditArchiveStructure()` | ✅ Read-only | Full structured report of the current archive |
-| `estimateAuditPerformance()` | ✅ Read-only | Runs a 30s test to calculate processing speed and capacity |
-| `auditJunkFiles()` | ✅ Read-only | Scans Drive for junk files in 5-min resumable batches |
-| `deleteConfirmedJunkFiles()` | ⚠️ Destructive | Reads Dashboard Sheet, trashes CONFIRMED junk files |
+`CONFIG.INBOX_RULES` is ordered. Institution rules are non-terminal; most other rules are terminal per run.
 
-### Key Helpers
+Main lanes:
 
-| Function | Notes |
+- priority Security
+- explicit finance action required
+- delayed financial records
+- developer/security/failure notices
+- documents, receipts, and orders
+- low-value bank marketing, digests, promotions, social, and routine Updates
+
+Runtime safety rechecks real attachments, protected senders/content, starred/important state, and sent-thread participation. Gmail category membership alone never authorizes a destructive action.
+
+Current rollout gates are documented in `docs/OPERATIONS.md`.
+
+## Financial classification
+
+Each configured institution receives:
+
+```text
+Auto/Finance/<Institution>
+Auto/Finance/<Institution>/<Message type>
+```
+
+Shared children are Security, Mortgage, Credits, Statements, Investments, Payments/Due Dates, Transactions, Promotions/Benefits, Cards, Service Notices, and Other (Gmail labels use the Spanish names in `docs/FINANCE_TAXONOMY.md`).
+
+Statements are evidence-aware: a matching subject must also have a statement document or explicit current-document access/download wording. Ualá adds institution-specific vocabulary and promotion precedence while keeping the same child taxonomy.
+
+Historical finance maintenance is label-only:
+
+1. Repair known incorrect statement/Other assignments and remove obsolete finance-only labels.
+2. Backfill parent/child labels in bounded batches.
+3. Self-remove the temporary trigger after an empty, error-free repair/backfill cycle.
+
+## Important configuration gates
+
+| Config | Current intent |
 |---|---|
-| `countThreads(query, max?)` | Paginates at 500; caps at `MAX_COUNT_PER_QUERY` |
-| `getTopSenders(query, topN)` | Samples first 500 threads only (speed tradeoff) |
-| `getDriveArchiveStats()` | Walks Drive tree 3 levels deep |
-| `processThread → processMessage → saveAttachment` | Archival pipeline |
-| `getOrCreateLabel / getOrCreateFolder` | Idempotent — safe to call repeatedly |
-| `sanitizeFilename` | Replaces `/ \ : * ? " < > \|` and spaces with `_` |
-| `computeThresholdDate(months)` | ⚠️ UTC-sensitive — see Gotchas |
-| `isSenderExcluded(email)` | Checks email against `CONFIG.EXCLUDED_SENDERS` (exact or `@domain`) |
-| `fileExistsInFolder(folder, name)` | Read-only dedup check before `createFile` |
-| `collectCleanupStats()` | Shared stat collector for HTML report + dashboard |
-| `sendHtmlCleanupReport(title?, batch?)` | Sends full styled HTML email via `MailApp` |
-| `sendBatchCompletionNotification(archived, deleted, skipped, startTime)` | Compact HTML batch-end notification — no extra Gmail queries |
-| `buildHtmlReportBody(title, stats, batch)` | Builds email-safe table-based HTML string |
-| `updateSpreadsheetDashboard(batch?)` | Appends to Run History + refreshes Summary sheet |
-| `getOrCreateDashboard()` | Idempotent — creates spreadsheet + sheets on first run |
+| `DRY_RUN` | Global write guard for supported workflows; normally false after reviewed samples |
+| `ENABLE_INBOX_RECORD_ARCHIVE` | Keep false until record/routine labels are sampled |
+| `ENABLE_RULE_RETENTION_TRASH` | Keep false until retention audit is explicitly approved |
+| `INBOX_BACKLOG_CONFIRMATION` | Empty unless applying one reviewed reversible backlog batch |
+| `FINANCIAL_SUBLABEL_BACKFILL_CONFIRMATION` | Populated only while the temporary finance workflow is intentionally active |
+| `FINANCIAL_LABEL_REPAIR_CONFIRMATION` | Populated only while finance repair is intentionally active |
 
----
+## Entry-point groups
 
-## ⚠️ Gotchas
+Read-only audits:
 
-1. **6-minute wall-clock limit** — keep `BATCH_SIZE` at 50 unless you've profiled a safe increase.
-2. **`GmailApp.search` max page = 500** — `countThreads` paginates; direct callers silently miss overflow.
-3. **`computeThresholdDate` is UTC** — GAS runs in UTC, not the user's local timezone. Midnight UTC runs may cross date boundaries unexpectedly.
-4. **`addFile`/`removeFile` is a reference move** — not a copy. Mid-migration failure can leave a file with two parents temporarily.
-5. **Logger is ephemeral** — output disappears after execution. For audits, write to a Sheet or send via `MailApp`.
-6. **`.clasp.json` contains OAuth tokens** — already in `.gitignore`, but double-check before every commit.
-7. **No dedup on `saveAttachment`** — ~~the `Processed_Drive` label is the only guard~~ **fixed**: `fileExistsInFolder()` checks by filename before `createFile`. Still, if the filename changes (e.g. due to a date bug), a second copy can appear.
-8. **`EXCLUDED_SENDERS` domain match uses `endsWith`** — `'@foo.com'` matches `bar@foo.com` but also `baz@sub.foo.com`. Use the full subdomain (`'@sub.foo.com'`) if you want a narrower match.
+- `auditInboxRules`
+- `auditFinancialSublabelBackfill`
+- `auditFinancialLabelRepair`
+- `auditInboxBacklog`
+- `auditInboxRuleRetention`
+- `auditBulkCleanup`
+- `generateCleanupReport`
+- Drive migration/junk audits
 
----
+Routine/temporary automation:
 
-## 📋 Backlog Snapshot
+- `runInboxRules`
+- `runScheduledFinancialSublabelBackfill`
+- `installInboxAutomation` / `removeInboxAutomation`
+- `installFinancialSublabelBackfillSchedule` / `removeFinancialSublabelBackfillSchedule`
 
-> Always check `tasks/todo.md` for the authoritative, up-to-date list.
+High-impact functions and exact safety details are listed in `docs/OPERATIONS.md`.
 
-### 🔴 High
-- [x] `clasp` CLI integration — **DONE** (2026-06-07)
-- [x] Unit-testable utility layer (`utils.gs` + Jest stubs) — **DONE** (2026-06-07)
+## Known constraints
 
-### 🟡 Medium
-- [x] Attachment deduplication (`fileExistsInFolder`) — **DONE** (2026-06-07)
-- [x] Configurable sender exclusion list (`EXCLUDED_SENDERS` + `isSenderExcluded`) — **DONE** (2026-06-07)
-- [x] Email notification on batch completion (`sendBatchCompletionNotification`) — **DONE** (2026-06-12)
-- [x] Dry-run mode (`DRY_RUN` config flag) — **DONE** (2026-06-12)
+- Practical Apps Script execution ceiling: six minutes; loops stop near 4.5 minutes.
+- Gmail search pages at 500.
+- Thread message reads are much slower than indexed search plus bulk label operations.
+- Gmail historical search needs explicit accent variants even though pure matching normalizes accents.
+- Parent finance label counts remain high by design.
+- Logger output is ephemeral; production verification should include execution logs plus Gmail/Drive state.
 
-### 🟢 Low
-- [x] HTML email report (`sendHtmlCleanupReport` + `buildHtmlReportBody`) — **DONE** (2026-06-07)
-- [x] Spreadsheet dashboard (`updateSpreadsheetDashboard` + `getOrCreateDashboard`) — **DONE** (2026-06-07)
-- [ ] Multi-account support investigation
+## Handover protocol
 
----
+At the end of a material session:
 
-## 🔭 Future Suite Modules
-
-`cleanup-attachments.gs` is **Module 1**. Planned future modules:
-- `cleanup-newsletters.gs`
-- `cleanup-promotions.gs`
-- `cleanup-large-emails.gs`
-- `utils.gs` — shared utilities across all modules
-- `appsscript.json` — GAS project manifest
-
----
-
-## 🏁 Session Wrap-Up Checklist
-
-1. Update `tasks/todo.md` — mark done items `[x]`, add new ones.
-2. Append a new entry to `tasks/lessons.md`.
-3. Update `CONTEXT.md` if architecture or scope changed.
-4. Commit to `dev`; merge to `main` only when stable.
+1. Update ignored `docs/HANDOVER.local.md` with the dated live snapshot; never put account-specific state in the public repository.
+2. Update `tasks/todo.md` and `tasks/checklist.md`.
+3. Add durable findings to `KNOWLEDGE.md` and `tasks/lessons.md`.
+4. Update this file only when architecture changes.
+5. Run tests and deployment-status checks.
+6. Scan the proposed commit for secrets and private operational metadata.
+7. Commit and push only with the appropriate user authorization.
