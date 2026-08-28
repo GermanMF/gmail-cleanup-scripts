@@ -5,6 +5,109 @@
 
 ---
 
+## 2026-08-27 — Enable reviewed receipt/order archive rollout
+
+### Context
+
+Receipt and order labels were sampled across the exact activation window before
+enabling delayed archive. A temporary private rollback boundary preserved both
+Inbox membership and original unread state for the bounded first run.
+
+### Verification state
+
+- `ENABLE_DOCUMENT_RECORD_ARCHIVE` is enabled; retention Trash remains disabled.
+- The controlled `runInboxRules` execution completed without reported errors.
+- Eligible records were archived and marked read while real-attachment records
+  remained in Inbox under the runtime protection.
+- The hourly trigger inventory was unchanged and no purge trigger was added.
+- `npm test -- --runInBand` passed all 158 tests after updating rollout-state assertions.
+
+## 2026-08-27 — Retire catch-all Routine Updates and cover live finance domains
+
+### Context
+
+A complete live review found that `Auto/LowValue/Routine Updates` duplicated
+Gmail's Updates category and mixed security, action-required, financial,
+document, travel, and developer mail. The lane was retired, explicit rules were
+strengthened, and observed `uala.mx` and `mercadopago.com` domains were added.
+
+### Verification state
+
+- `Auto/LowValue/Routine Updates` was removed from 293 conversations and deleted.
+- The producer was removed from inbox, backlog, and retention configuration.
+- Receipt/order archiving now uses the separate, disabled
+  `ENABLE_DOCUMENT_RECORD_ARCHIVE` gate.
+- The finance audit found 207 Mercado Pago and 47 Ualá threads missing a child.
+- Three label-only batches classified all 254 threads with zero reported
+  classification errors and explicitly preserved read/archive state.
+- The final audit reports zero missing children for all ten institutions.
+- The temporary backfill confirmation token was cleared after completion.
+
+## 2026-08-27 — Retire redundant finance Records lane
+
+### Context
+
+The complete live `Auto/Finance/Records` sample duplicated institution and
+subcategory labels and included security/actionable false positives. The user
+chose to retire the operational label rather than preserve a cross-institution
+archive lane in the visible finance taxonomy.
+
+### Lessons & Patterns
+
+1. **Operational policy should not masquerade as taxonomy.** Institution and
+   subcategory labels already describe each financial thread; archive eligibility
+   should be derived from explicit categories and safety exclusions.
+2. **Broad record words are not sufficient safety evidence.** Phrases such as
+   `estado de cuenta` and `retiro` can occur in access alerts and temporary codes.
+3. **Retire the producer before deleting its output.** Remove and deploy the rule
+   first, then remove the live label without changing read or archive state.
+
+### Verification state
+
+- The complete local suite passes with 145 tests.
+- Production no longer contains the `Finance/Records` inbox rule.
+- Gmail removed `Auto/Finance/Records` from 26 conversations and deleted the label.
+- A final label search returned zero results, while sampled institution/child labels
+  and Inbox state remained present.
+
+## 2026-08-27 — Account-specific finance taxonomy consolidation
+
+### Context
+
+A full read-only audit established that the configured BBVA path was empty and
+that GBM-origin messages belong to the same institution view as Mercado Pago.
+The reviewed label-only consolidation was deployed and executed, followed by
+independently gated deletion of empty retired labels and a token-clearing deploy.
+
+### Lessons & Patterns
+
+1. **Account taxonomy overrides a generic institution catalog.** Do not keep an
+   empty institution merely because its sender domains are plausible in general.
+2. **Consolidation must preserve the full hierarchy.** Migrate each child to the
+   same-named Mercado Pago child, add the Mercado Pago parent, and only then
+   remove the corresponding GBM label.
+3. **Separate migration from deletion.** The deletion entry point refuses to run
+   while any retired GBM or BBVA label still has a thread, so an incomplete batch
+   cannot destroy its source taxonomy.
+4. **Exact repairs should remain exact.** The verified Ualá fix is constrained to
+   one normalized subject rather than a broader rule that could move unrelated mail.
+5. **An audit must enforce the same evidence gate as its repair.** Subject-only
+   counting reported 18 apparent `Otros -> Estados de cuenta` candidates, but the
+   repair correctly rejected every one for lacking a current statement document or
+   explicit current-document access wording. The audit now applies that same filter.
+
+### Verification state
+
+- The GBM migration completed with 76 label moves for 38 threads and zero errors;
+  parent plus same-named child now coexist under Mercado Pago.
+- The exact Ualá correction changed one thread with zero errors.
+- Four empty retired labels were deleted: BBVA parent, GBM parent, and two GBM children.
+- Two newly arrived parent-only threads were backfilled; all 10 institutions report
+  zero missing children inside the ten-year lookback.
+- Final evidence-aware repair audit reports no candidates and no obsolete assignments.
+- All five finance confirmation tokens are empty and were verified live by blocked runs.
+- The complete local suite passes with 144 tests.
+
 ## 2026-08-24 — Evidence-aware bank statements and production-safe handover
 
 ### Context
@@ -14,7 +117,10 @@ Audited live Ualá and Santander mail, corrected statement false positives acros
 ### Lessons & Patterns
 
 1. **A subject keyword is a candidate, not evidence.** `estado de cuenta` appeared in Paperless, consultation, design, education, and password-instruction notices. True statement classification now requires a PDF/XML/ZIP document or explicit current-document access/download wording.
-2. **Attachment-only is also too strict.** GBM, PayPal, Nu, Hey Banco, Openbank, and some Banamex flows deliver statements through a link or app. Validate explicit availability/access language instead of assuming all banks attach a file.
+2. **Attachment-only is also too strict.** Mercado Pago mail originating from
+   GBM, PayPal, Nu, Hey Banco, Openbank, and some Banamex flows deliver statements
+   through a link or app. Validate explicit availability/access language instead
+   of assuming all banks attach a file.
 3. **Repair old labels separately from preventing new errors.** Incoming resolution validates message evidence; historical repair targets known incorrect statement labels; backfill filters statement candidates before bulk labeling.
 4. **One shared taxonomy can still support bank-specific polymorphism.** Ualá keeps the same child names but adds its own vocabulary and evaluates promotions before generic transactions.
 5. **Script locks should skip, not overlap.** The first post-deploy scheduled run safely skipped while the hourly classifier held the lock. A later controlled run completed without errors and preserved read/archive state.
@@ -235,3 +341,19 @@ When moving files between folders, Google Drive's `Folder.addFile()` combined wi
 - `GmailThread.getMessages()` across a 100-thread batch can consume roughly three minutes. For subject-based historical classification, use Gmail search subject predicates and `GmailLabel.addToThreads()` so reads and writes remain bulk operations.
 - Gmail historical search can distinguish accented Spanish terms even when the incoming pure-text classifier normalizes them. Expand query phrases with accented variants (`autorización`, `promoción`, `código`) and chunk long subject OR groups so the live rule and historical backfill classify the same mail.
 - When a temporary trigger shares a script lock with a long hourly job, schedule it beyond the observed batch duration. Finance repair now runs every ten minutes, processes obsolete labels before expensive child-label inspection, and self-removes only after repair and backfill are both empty.
+
+## 2026-08-27 — Split financial products with query-scoped parent rehomes
+
+- Afore must not be detected by the word alone: ordinary bank transaction mail
+  can mention `AFORE MOVIL` as a merchant. Use verified product senders and exact
+  statement subjects, then explicitly exclude those patterns from the broader
+  Banamex rule.
+- Product/institution sections should remain parents, not shared child labels;
+  this preserves the orthogonal message type (`Afore/Estados de cuenta`,
+  `Infonavit/Seguridad`, and so on).
+- When splitting a parent, add the exact new parent/child before removing only
+  query-matched old finance labels. A post-run audit must prove zero missing
+  parents, zero stale sources, exactly one child, and an empty temporary token.
+- Include both `estado de cuenta` and `estados de cuenta`; the plural Afore
+  subject previously matched `Inversiones` only because it also contained the
+  word `afore`.

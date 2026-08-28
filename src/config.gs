@@ -2,34 +2,78 @@
  * Configuration object for the Gmail Attachment Processor.
  * Modify these settings to adjust the script's behavior.
  */
+const AFORE_FINANCIAL_QUERY = [
+  '{',
+  'from:aforebanamex@banamex.com',
+  'from:tustramites.afore@banamex.com',
+  'from:appsar-noreply@aforemovil.com',
+  'subject:"Solicitud de Estados de Cuenta Afore"',
+  '}',
+].join(' ');
+
+const INFONAVIT_FINANCIAL_QUERY = '{from:infonavit.org.mx from:infonavit.gob.mx}';
+
 const FINANCIAL_INSTITUTIONS = [
   { name: 'Santander', query: '{from:santander.com.mx from:envio.santander.com.mx}' },
-  { name: 'Banamex', query: '{from:banamex.com from:citibanamex.com}' },
-  { name: 'BBVA', query: '{from:bbva.com from:bbva.com.mx}' },
+  { name: 'Afore', query: AFORE_FINANCIAL_QUERY },
+  { name: 'Infonavit', query: INFONAVIT_FINANCIAL_QUERY },
+  {
+    name: 'Banamex',
+    query: [
+      '{from:banamex.com from:citibanamex.com}',
+      '-from:aforebanamex@banamex.com',
+      '-from:tustramites.afore@banamex.com',
+      '-subject:"Solicitud de Estados de Cuenta Afore"',
+    ].join(' '),
+  },
   { name: 'Invex', query: 'from:invextarjetas.com.mx' },
-  { name: 'GBM', query: 'from:gbm.com.mx' },
-  { name: 'Mercado Pago', query: 'from:mercadopago.com.mx' },
+  {
+    name: 'Mercado Pago',
+    query: '{from:mercadopago.com.mx from:mercadopago.com from:gbm.com.mx}',
+  },
   { name: 'PayPal', query: 'from:paypal.com' },
   { name: 'Hey Banco', query: '{from:hey.inc from:heybanco.com}' },
   { name: 'Nu', query: '{from:nu.com.mx from:nubank.com.mx}' },
   { name: 'Revolut', query: 'from:revolut.com' },
-  { name: 'Uala', query: '{from:uala.com.mx from:abccapital.com.mx}' },
+  { name: 'Uala', query: '{from:uala.com.mx from:uala.mx from:abccapital.com.mx}' },
   { name: 'Openbank', query: 'from:openbank' },
 ];
 
 const FINANCIAL_SENDER_QUERY = [
   '{',
   'from:santander.com.mx', 'from:envio.santander.com.mx',
+  'from:aforemovil.com', 'from:infonavit.org.mx', 'from:infonavit.gob.mx',
   'from:banamex.com', 'from:citibanamex.com',
-  'from:bbva.com', 'from:bbva.com.mx',
-  'from:invextarjetas.com.mx', 'from:gbm.com.mx',
-  'from:mercadopago.com.mx', 'from:paypal.com',
+  'from:invextarjetas.com.mx',
+  'from:mercadopago.com.mx', 'from:mercadopago.com', 'from:gbm.com.mx', 'from:paypal.com',
   'from:hey.inc', 'from:heybanco.com',
   'from:nu.com.mx', 'from:nubank.com.mx',
-  'from:revolut.com', 'from:uala.com.mx', 'from:abccapital.com.mx',
+  'from:revolut.com', 'from:uala.com.mx', 'from:uala.mx', 'from:abccapital.com.mx',
   'from:openbank',
   '}',
 ].join(' ');
+
+/** One-time, label-only consolidation of retired institution paths. */
+const FINANCIAL_LABEL_MIGRATIONS = [
+  { source: 'GBM', target: 'Mercado Pago' },
+];
+
+/** Query-scoped label-only moves for products split from broader institutions. */
+const FINANCIAL_INSTITUTION_REHOMES = [
+  {
+    source: 'Banamex',
+    target: 'Afore',
+    query: AFORE_FINANCIAL_QUERY,
+  },
+  {
+    source: '',
+    target: 'Infonavit',
+    query: INFONAVIT_FINANCIAL_QUERY,
+  },
+];
+
+/** Labels removed from the active taxonomy and deletable only after they are empty. */
+const FINANCIAL_RETIRED_INSTITUTIONS = ['BBVA', 'GBM'];
 
 /**
  * Ordered financial sublabels. Security and mortgage phrases precede broader
@@ -67,7 +111,8 @@ const FINANCIAL_SUBLABELS = [
     name: 'Estados de cuenta',
     requiresStatementEvidence: true,
     phrases: [
-      'estado de cuenta', 'account statement', 'estado de cuenta integral',
+      'estado de cuenta', 'estados de cuenta', 'account statement',
+      'estado de cuenta integral',
       'estado de cuenta electronico', 'corte mensual', 'resumen mensual',
     ],
   },
@@ -129,6 +174,35 @@ const FINANCIAL_SUBLABELS = [
  * bank's marketing language to take precedence over generic transaction words.
  */
 const FINANCIAL_INSTITUTION_SUBLABEL_OVERRIDES = {
+  Afore: {
+    phrases: {
+      Seguridad: ['clave de acceso'],
+      Inversiones: [
+        'ahorro voluntario', 'aportacion voluntaria', 'siefore',
+        'ahorro para el retiro',
+      ],
+      'Promociones y beneficios': ['webinar', 'evento exclusivo'],
+      'Avisos de servicio': [
+        'bienvenido a aforemovil', 'modificacion de datos',
+        'manten actualizado tu expediente', 'recibe asesoria personalizada',
+        'app aforemovil',
+      ],
+    },
+    removePhrases: {
+      Inversiones: ['afore'],
+    },
+  },
+  Infonavit: {
+    phrases: {
+      Seguridad: ['recuperacion de contrasena', 'cambio de contrasena'],
+      Transacciones: ['resumen de movimientos aportaciones vivienda'],
+      'Promociones y beneficios': ['aportaciones extraordinarias'],
+      'Avisos de servicio': [
+        'una sola app', 'correccion de rfc', 'confirmacion de cita',
+        'confirmacion de registro',
+      ],
+    },
+  },
   Uala: {
     phrases: {
       Inversiones: [
@@ -152,9 +226,16 @@ function buildFinancialSublabelsForInstitution(institutionName) {
 
   const sublabels = FINANCIAL_SUBLABELS.map(function (subcategory) {
     const extraPhrases = (override.phrases && override.phrases[subcategory.name]) || [];
-    if (!extraPhrases.length) return subcategory;
+    const removedPhrases =
+      (override.removePhrases && override.removePhrases[subcategory.name]) || [];
+    if (!extraPhrases.length && !removedPhrases.length) return subcategory;
+    const removed = new Set(removedPhrases.map(function (phrase) {
+      return String(phrase).toLowerCase();
+    }));
     return Object.assign({}, subcategory, {
-      phrases: extraPhrases.concat(subcategory.phrases || []),
+      phrases: extraPhrases.concat((subcategory.phrases || []).filter(function (phrase) {
+        return !removed.has(String(phrase).toLowerCase());
+      })),
     });
   });
 
@@ -355,8 +436,6 @@ const CONFIG = {
     '@banamex.com': 'Banamex',
     '@citibanamex.com': 'Citibanamex',
     '@notificaciones.afore.banamex.com': 'Citibanamex',
-    '@bbva.com': 'BBVA',
-    '@bbva.com.mx': 'BBVA',
     '@santander.com.mx': 'Santander',
     '@infonavit.gob.mx': 'Infonavit',
     '@imss.gob.mx': 'IMSS',
@@ -377,7 +456,7 @@ const CONFIG = {
     '@allianz.com.mx': 'Allianz',
     '@virginiasurety.com': 'Samsung Care',
     '@dentalia.com': 'Dentalia',
-    '@gbm.com.mx': 'GBM',
+    '@gbm.com.mx': 'Mercado Pago',
     '@condovive.com': 'CondoVive',
     '@invextarjetas.com.mx': 'Invex Tarjetas',
     '@santander.com.mx': 'Santander',
@@ -478,7 +557,7 @@ const CONFIG = {
         'estado de cuenta', 'account statement', 'edos',
         'resumen de movimientos', 'resumen movimientos',
         'tu estado de cuenta',
-        // GBM inversiones + INVEX (detected 2026-06-13)
+        // GBM-origin Mercado Pago statements + INVEX (detected 2026-06-13)
         'gbm', 'invex', 'tuestadodecuenta', 'estadosdecuenta',
         'smart statement',
       ],
@@ -668,11 +747,8 @@ const CONFIG = {
   INBOX_LOW_VALUE_MIN_AGE_DAYS: 7,
   /** Maximum threads fetched per rule and execution. */
   INBOX_RULE_BATCH_SIZE: 100,
-  /**
-   * Enables the new delayed archive behavior for trusted records and routine
-   * Updates. Keep false until their labels have been sampled in the live Inbox.
-   */
-  ENABLE_INBOX_RECORD_ARCHIVE: false,
+  /** Enables delayed archive only for reviewed receipt and order records. */
+  ENABLE_DOCUMENT_RECORD_ARCHIVE: true,
   /**
    * Domains that low-value rules may never archive, mark read, or trash.
    * Financial domains are deliberately absent: bank classifier rules add an
@@ -755,7 +831,7 @@ const CONFIG = {
     {
       name: 'Security',
       label: 'Auto/Priority/Security',
-      query: '{from:accounts.google.com subject:"security alert" subject:seguridad subject:verification subject:verificacion subject:"codigo de seguridad" subject:"inicio de sesion" subject:"new sign in" subject:"nuevo inicio de sesion"}',
+      query: '{from:accounts.google.com subject:"security alert" subject:seguridad subject:verification subject:verificacion subject:"codigo de seguridad" subject:"código de verificación" subject:"verification code" subject:"one time password" subject:passcode subject:"password reset" subject:"actualizar tu contraseña" subject:"username reminder" subject:"validate your access" subject:passkey subject:"OAuth application" subject:"data exposure" subject:"inicio de sesion" subject:"inicio de sesión" subject:"new sign in" subject:"sign in" subject:"log in" subject:"nuevo inicio de sesion"}',
       archive: false,
       markRead: false,
       markImportant: true,
@@ -769,20 +845,6 @@ const CONFIG = {
       markRead: false,
       markImportant: true,
       lowValue: false,
-    },
-    {
-      name: 'Finance/Records',
-      label: 'Auto/Finance/Records',
-      query: `${FINANCIAL_SENDER_QUERY} ${FINANCIAL_RECORD_QUERY}`,
-      archive: true,
-      markRead: true,
-      markImportant: false,
-      lowValue: false,
-      record: true,
-      minimumAgeDays: 14,
-      ignoreImportantProtection: true,
-      allowProtectedContentArchive: true,
-      requiresRecordArchiveEnabled: true,
     },
     {
       name: 'Travel/Actionable',
@@ -824,7 +886,7 @@ const CONFIG = {
     {
       name: 'Receipts',
       label: 'Auto/Documents/Receipts',
-      query: '{subject:factura subject:recibo subject:invoice subject:receipt subject:comprobante}',
+      query: '{subject:factura subject:facturas subject:recibo subject:invoice subject:invoices subject:receipt subject:comprobante subject:"tu ticket" subject:"hemos recibido tu pago" subject:"gracias por comprar"}',
       archive: true,
       markRead: true,
       markImportant: false,
@@ -833,12 +895,12 @@ const CONFIG = {
       minimumAgeDays: 14,
       ignoreImportantProtection: true,
       allowProtectedContentArchive: true,
-      requiresRecordArchiveEnabled: true,
+      archiveGate: 'ENABLE_DOCUMENT_RECORD_ARCHIVE',
     },
     {
       name: 'Orders/Records',
       label: 'Auto/Documents/Orders',
-      query: '{subject:pedido subject:"order confirmation" subject:"your order" subject:"pedido fue entregado" subject:"order delivered" subject:"shipment delivered"}',
+      query: '{subject:pedido subject:"order confirmation" subject:"your order" subject:"pedido fue entregado" subject:"order delivered" subject:"shipment delivered" ({from:amazon.com.mx from:mercadolibre.com.mx} {subject:"tu compra está en camino" subject:"en proceso de entrega" subject:"enviado:" subject:"entregado:" subject:"producto cancelado" subject:compraste})}',
       archive: true,
       markRead: true,
       markImportant: false,
@@ -847,7 +909,7 @@ const CONFIG = {
       minimumAgeDays: 14,
       ignoreImportantProtection: true,
       allowProtectedContentArchive: true,
-      requiresRecordArchiveEnabled: true,
+      archiveGate: 'ENABLE_DOCUMENT_RECORD_ARCHIVE',
     },
     {
       name: 'Updates/BankMarketing',
@@ -889,22 +951,11 @@ const CONFIG = {
     {
       name: 'Updates/ActionRequired',
       label: 'Auto/Priority/Action Required',
-      query: 'category:updates {subject:"action required" subject:"accion requerida" subject:"requiere tu atencion" subject:"complete your" subject:"completa tu" subject:"confirm your" subject:"confirma tu" subject:expira subject:expires subject:renovacion subject:renewal subject:failed subject:fallo subject:rechazado}',
+      query: 'category:updates {subject:"action required" subject:"accion requerida" subject:"requiere tu atencion" subject:"complete your" subject:"completa tu" subject:"confirm your" subject:"confirma tu" subject:"at risk of suspension" subject:"expired card" subject:"about to be deleted" subject:"data will be deleted" subject:"usage alert" subject:"will not renew" subject:"saldo negativo" subject:"negative balance" subject:"parking session is about to expire" subject:failed subject:fallo subject:rechazado}',
       archive: false,
       markRead: false,
       markImportant: true,
       lowValue: false,
-    },
-    {
-      name: 'Updates/Routine',
-      label: 'Auto/LowValue/Routine Updates',
-      query: 'category:updates -has:attachment -is:starred',
-      archive: true,
-      markRead: true,
-      markImportant: false,
-      lowValue: true,
-      ignoreImportantProtection: true,
-      requiresRecordArchiveEnabled: true,
     },
   ],
 
@@ -915,13 +966,6 @@ const CONFIG = {
   INBOX_BACKLOG_BATCH_SIZE: 100,
   INBOX_BACKLOG_CONFIRMATION: '', // required value: ARCHIVE_INBOX_BACKLOG
   INBOX_BACKLOG_POLICIES: [
-    {
-      name: 'Routine Updates',
-      label: 'Cleanup_Review/Backlog/Routine Updates',
-      query: 'in:inbox category:updates older_than:30d -has:attachment -is:starred -is:important',
-      markRead: true,
-      allowProtectedContentArchive: false,
-    },
     {
       name: 'Receipts',
       label: 'Cleanup_Review/Backlog/Receipts',
@@ -942,9 +986,14 @@ const CONFIG = {
   FINANCIAL_SUBLABEL_BACKFILL_LOOKBACK_DAYS: 3650,
   FINANCIAL_SUBLABEL_BACKFILL_BATCH_SIZE: 100,
   FINANCIAL_SUBLABEL_BACKFILL_INTERVAL_MINUTES: 10,
-  FINANCIAL_SUBLABEL_BACKFILL_CONFIRMATION: 'APPLY_FINANCIAL_SUBLABELS',
+  FINANCIAL_SUBLABEL_BACKFILL_CONFIRMATION: '',
   FINANCIAL_LABEL_REPAIR_BATCH_SIZE: 100,
-  FINANCIAL_LABEL_REPAIR_CONFIRMATION: 'REPAIR_FINANCIAL_LABELS',
+  FINANCIAL_LABEL_REPAIR_CONFIRMATION: '',
+  /** One-time ad hoc finance corrections remain locked until a reviewed live run. */
+  FINANCIAL_TAXONOMY_MIGRATION_CONFIRMATION: '',
+  FINANCIAL_INSTITUTION_REHOME_CONFIRMATION: '',
+  FINANCIAL_VERIFIED_CORRECTIONS_CONFIRMATION: '',
+  FINANCIAL_RETIRED_LABEL_DELETION_CONFIRMATION: '',
   /** Auto-trash remains disabled until auditInboxRuleRetention() is reviewed. */
   ENABLE_RULE_RETENTION_TRASH: false,
   RULE_RETENTION_POLICIES: [
@@ -952,7 +1001,6 @@ const CONFIG = {
     { label: 'Auto/LowValue/Social', olderThanDays: 90 },
     { label: 'Auto/LowValue/Digests', olderThanDays: 60 },
     { label: 'Auto/LowValue/Bank Promotions', olderThanDays: 60 },
-    { label: 'Auto/LowValue/Routine Updates', olderThanDays: 90 },
   ],
   /** Batch limit for retention cleanup and manual label emptying. */
   RULE_RETENTION_BATCH_SIZE: 100,
@@ -968,7 +1016,12 @@ if (typeof module !== 'undefined') {
   module.exports = {
     CONFIG,
     FINANCIAL_INSTITUTIONS,
+    AFORE_FINANCIAL_QUERY,
+    INFONAVIT_FINANCIAL_QUERY,
     FINANCIAL_SENDER_QUERY,
+    FINANCIAL_LABEL_MIGRATIONS,
+    FINANCIAL_INSTITUTION_REHOMES,
+    FINANCIAL_RETIRED_INSTITUTIONS,
     FINANCIAL_SUBLABELS,
     FINANCIAL_INSTITUTION_SUBLABEL_OVERRIDES,
     FINANCIAL_ACTION_REQUIRED_QUERY,

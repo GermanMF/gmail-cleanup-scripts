@@ -1,6 +1,6 @@
 # Project Context — Gmail Cleanup Scripts
 
-Last architecture update: **2026-08-24**
+Last architecture update: **2026-08-27**
 
 Read this file for the system map. Then read `docs/HANDOVER.md` for live state and `KNOWLEDGE.md` for stable invariants.
 
@@ -98,10 +98,9 @@ Main lanes:
 
 - priority Security
 - explicit finance action required
-- delayed financial records
 - developer/security/failure notices
 - documents, receipts, and orders
-- low-value bank marketing, digests, promotions, social, and routine Updates
+- low-value bank marketing, digests, promotions, and social mail
 
 Runtime safety rechecks real attachments, protected senders/content, starred/important state, and sent-thread participation. Gmail category membership alone never authorizes a destructive action.
 
@@ -118,7 +117,7 @@ Auto/Finance/<Institution>/<Message type>
 
 Shared children are Security, Mortgage, Credits, Statements, Investments, Payments/Due Dates, Transactions, Promotions/Benefits, Cards, Service Notices, and Other (Gmail labels use the Spanish names in `docs/FINANCE_TAXONOMY.md`).
 
-Statements are evidence-aware: a matching subject must also have a statement document or explicit current-document access/download wording. Ualá adds institution-specific vocabulary and promotion precedence while keeping the same child taxonomy.
+Statements are evidence-aware: a matching subject must also have a statement document or explicit current-document access/download wording. Afore and Infonavit have dedicated parents while retaining the shared type children. Ualá adds institution-specific vocabulary and promotion precedence while keeping the same child taxonomy.
 
 Historical finance maintenance is label-only:
 
@@ -126,16 +125,21 @@ Historical finance maintenance is label-only:
 2. Backfill parent/child labels in bounded batches.
 3. Self-remove the temporary trigger after an empty, error-free repair/backfill cycle.
 
+The configured taxonomy has twelve institutions, including dedicated Afore and
+Infonavit parents. GBM-origin mail belongs to the Mercado Pago hierarchy, and
+BBVA is intentionally not configured.
+
 ## Important configuration gates
 
 | Config | Current intent |
 |---|---|
 | `DRY_RUN` | Global write guard for supported workflows; normally false after reviewed samples |
-| `ENABLE_INBOX_RECORD_ARCHIVE` | Keep false until record/routine labels are sampled |
+| `ENABLE_DOCUMENT_RECORD_ARCHIVE` | Enabled after reviewed receipt/order sampling; archives eligible records after 14 days |
 | `ENABLE_RULE_RETENTION_TRASH` | Keep false until retention audit is explicitly approved |
 | `INBOX_BACKLOG_CONFIRMATION` | Empty unless applying one reviewed reversible backlog batch |
 | `FINANCIAL_SUBLABEL_BACKFILL_CONFIRMATION` | Populated only while the temporary finance workflow is intentionally active |
 | `FINANCIAL_LABEL_REPAIR_CONFIRMATION` | Populated only while finance repair is intentionally active |
+| `FINANCIAL_INSTITUTION_REHOME_CONFIRMATION` | Exact temporary token for the reviewed Afore/Infonavit label-only migration |
 
 ## Entry-point groups
 

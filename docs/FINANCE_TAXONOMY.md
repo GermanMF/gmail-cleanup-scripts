@@ -13,19 +13,29 @@ Every matched bank thread keeps its parent label even after receiving a child. T
 | Institution | Gmail sender query |
 |---|---|
 | Santander | `{from:santander.com.mx from:envio.santander.com.mx}` |
-| Banamex | `{from:banamex.com from:citibanamex.com}` |
-| BBVA | `{from:bbva.com from:bbva.com.mx}` |
+| Afore | Verified Afore Banamex/AforeMóvil senders plus the exact Afore statement subject |
+| Infonavit | `{from:infonavit.org.mx from:infonavit.gob.mx}` |
+| Banamex | Banamex/Citibanamex domains excluding the verified Afore split patterns |
 | Invex | `from:invextarjetas.com.mx` |
-| GBM | `from:gbm.com.mx` |
-| Mercado Pago | `from:mercadopago.com.mx` |
+| Mercado Pago | `{from:mercadopago.com.mx from:mercadopago.com from:gbm.com.mx}` |
 | PayPal | `from:paypal.com` |
 | Hey Banco | `{from:hey.inc from:heybanco.com}` |
 | Nu | `{from:nu.com.mx from:nubank.com.mx}` |
 | Revolut | `from:revolut.com` |
-| Uala | `{from:uala.com.mx from:abccapital.com.mx}` |
+| Uala | `{from:uala.com.mx from:uala.mx from:abccapital.com.mx}` |
 | Openbank | `from:openbank` |
 
 The Gmail label remains `Uala` for compatibility even though the brand is normally written Ualá.
+GBM-origin messages are intentionally part of `Auto/Finance/Mercado Pago`; do
+not create or maintain a separate GBM institution label. BBVA is intentionally
+absent from this account's taxonomy.
+
+`Afore` and `Infonavit` are dedicated parents, not shared child labels. This
+preserves the useful message type below each one: an Afore statement remains
+`Afore/Estados de cuenta`, while a password notice remains
+`Infonavit/Seguridad`. The Afore query intentionally does not match the word
+`afore` by itself because ordinary Banamex transaction messages can mention
+`AFORE MOVIL` as the merchant.
 
 ## Shared child labels
 
@@ -61,7 +71,28 @@ Known non-statement patterns include:
 - `Reenvío de Indicaciones importantes` / password instructions → `Avisos de servicio`
 - `Fe de erratas` without a current document → not a statement
 
-Legitimate link-delivered patterns have been observed for GBM, PayPal, Nu, Hey Banco, Openbank, and some Banamex mail. Therefore attachment-only classification would be too strict; explicit current-document access is the controlled exception.
+Legitimate link-delivered patterns have been observed for Mercado Pago mail
+originating from GBM, PayPal, Nu, Hey Banco, Openbank, and some Banamex mail.
+Therefore attachment-only classification would be too strict; explicit
+current-document access is the controlled exception.
+
+Observed Infonavit subjects such as `Ya está disponible tu estado de cuenta`
+qualify only because they explicitly announce the current document. They do
+not require an attachment. Generic education or future-delivery notices remain
+subject to the same evidence rejection as every other institution.
+
+## Afore- and Infonavit-specific behavior
+
+Afore removes the generic word `afore` from child selection so the parent name
+does not force every message into `Inversiones`. Verified retirement language
+such as `ahorro voluntario` and `SIEFORE` selects `Inversiones`; access keys
+select `Seguridad`; webinars select `Promociones y beneficios`; and service or
+profile notices select `Avisos de servicio`.
+
+Infonavit uses its official sender domains. Password/NIP mail selects
+`Seguridad`, housing-contribution summaries select `Transacciones`, current
+statement notices select `Estados de cuenta`, and account/citation/registration
+confirmations select `Avisos de servicio`.
 
 ## Ualá-specific behavior
 
@@ -79,7 +110,8 @@ Examples:
 | `Tu paquete recomendado acaba de ser actualizado` | `Inversiones` |
 | `Aviso de Mantenimiento` | `Avisos de servicio` |
 
-The configured sender query has been verified against live mail. The remaining Ualá discrepancy observed during the 2026-08-24 session was backfill progress, not a sender-domain failure.
+Live mail has been observed from both `uala.com.mx` and `uala.mx`; both are part
+of the same Ualá institution path.
 
 ## Live versus historical classification
 
@@ -111,6 +143,12 @@ It does not change read/archive state.
 6. Add real-world tests in `__tests__/config.test.js` and evidence tests in `__tests__/inbox-rules.test.js`.
 7. Run the full suite.
 8. Audit live candidates before deploying or backfilling.
+
+For a query-scoped split from an existing institution, use
+`auditFinancialInstitutionRehomeAdHoc` first. The paired mutator
+`rehomeFinancialInstitutionsAdHoc` is token-gated, adds the exact new
+parent/child, and removes only the query-matched old finance labels. It never
+changes read/archive state.
 
 ## Historical-query constraints
 
