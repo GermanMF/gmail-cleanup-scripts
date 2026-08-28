@@ -4,6 +4,9 @@ const configModule = require('../src/config.gs');
 const utils = require('../src/utils.gs');
 
 global.CONFIG = configModule.CONFIG;
+global.FINANCIAL_SUBLABELS = configModule.FINANCIAL_SUBLABELS;
+global.FINANCIAL_LABEL_MIGRATIONS = configModule.FINANCIAL_LABEL_MIGRATIONS;
+global.FINANCIAL_RETIRED_INSTITUTIONS = configModule.FINANCIAL_RETIRED_INSTITUTIONS;
 global.classifyFinancialSubject = utils.classifyFinancialSubject;
 global.normalizeForMatching = utils.normalizeForMatching;
 global.expandFinancialSearchPhrases = configModule.expandFinancialSearchPhrases;
@@ -25,6 +28,10 @@ const {
   buildFinancialSublabelSearchQuery,
   buildFinancialSublabelSearchQueries,
   buildFinancialSublabelSubjectQuery,
+  buildFinancialTaxonomyMigrationMappings,
+  listFinancialInstitutionLabelNames,
+  buildFinancialInstitutionRehomeSourceLabelNames,
+  buildVerifiedFinancialCorrectionPolicies,
 } = require('../src/inbox-rules.gs');
 
 describe('inbox rule queries', () => {
@@ -44,41 +51,60 @@ describe('inbox rule queries', () => {
 
   test('uses a rule-specific minimum age for trusted records', () => {
     const rule = configModule.CONFIG.INBOX_RULES.find(
-      (candidate) => candidate.name === 'Finance/Records'
+      (candidate) => candidate.name === 'Receipts'
     );
     expect(buildInboxRuleQuery(rule)).toContain('older_than:14d');
   });
 
   test('labels gated record mail once during the sampling phase', () => {
     const rule = configModule.CONFIG.INBOX_RULES.find(
-      (candidate) => candidate.name === 'Finance/Records'
+      (candidate) => candidate.name === 'Receipts'
     );
     existingLabels.add(rule.label);
-    expect(buildInboxRuleQuery(rule)).toContain(`-label:"${rule.label}"`);
+    const originalGate = CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE;
+    CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE = false;
+    try {
+      expect(buildInboxRuleQuery(rule)).toContain(`-label:"${rule.label}"`);
+    } finally {
+      CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE = originalGate;
+    }
   });
 
   test('reconsiders labelled Inbox records when record archiving is enabled', () => {
     const rule = configModule.CONFIG.INBOX_RULES.find(
-      (candidate) => candidate.name === 'Finance/Records'
+      (candidate) => candidate.name === 'Receipts'
     );
     existingLabels.add(rule.label);
-    CONFIG.ENABLE_INBOX_RECORD_ARCHIVE = true;
+    const originalGate = CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE;
+    CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE = true;
     try {
       expect(buildInboxRuleQuery(rule)).not.toContain(`-label:"${rule.label}"`);
     } finally {
-      CONFIG.ENABLE_INBOX_RECORD_ARCHIVE = false;
+      CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE = originalGate;
     }
   });
 
-  test('keeps new record archives gated without pausing established low-value rules', () => {
-    const financeRecords = configModule.CONFIG.INBOX_RULES.find(
-      (candidate) => candidate.name === 'Finance/Records'
+  test('enables reviewed record archives without pausing established low-value rules', () => {
+    const receipts = configModule.CONFIG.INBOX_RULES.find(
+      (candidate) => candidate.name === 'Receipts'
     );
     const promotions = configModule.CONFIG.INBOX_RULES.find(
       (candidate) => candidate.name === 'Promotions'
     );
-    expect(isInboxRuleArchiveEnabled(financeRecords)).toBe(false);
+    expect(isInboxRuleArchiveEnabled(receipts)).toBe(true);
     expect(isInboxRuleArchiveEnabled(promotions)).toBe(true);
+  });
+
+  test('does not create a redundant cross-institution finance records label', () => {
+    expect(configModule.CONFIG.INBOX_RULES).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Auto/Finance/Records' }),
+    ]));
+  });
+
+  test('does not create a catch-all Routine Updates label', () => {
+    expect(configModule.CONFIG.INBOX_RULES).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Auto/LowValue/Routine Updates' }),
+    ]));
   });
 });
 
@@ -158,7 +184,7 @@ describe('financial child label resolution', () => {
       'Te enviamos el Estado de Cuenta digital. Para acceder deberás ingresar.',
     ],
     [
-      'GBM',
+      'Mercado Pago',
       'Estado de Cuenta',
       'Tu estado de cuenta del mes ya está disponible. Descárgalo aquí.',
     ],
@@ -170,6 +196,81 @@ describe('financial child label resolution', () => {
       getSubject: () => subject,
       getPlainBody: () => body,
     }], false)).toContain(`${rule.label}/Estados de cuenta`);
+  });
+
+  test('maps every GBM child and parent into the Mercado Pago hierarchy', () => {
+    const mappings = buildFinancialTaxonomyMigrationMappings(
+      configModule.FINANCIAL_LABEL_MIGRATIONS[0]
+    );
+    expect(mappings).toContainEqual({
+      source: 'Auto/Finance/GBM/Estados de cuenta',
+      target: 'Auto/Finance/Mercado Pago/Estados de cuenta',
+      targetParent: 'Auto/Finance/Mercado Pago',
+    });
+    expect(mappings[mappings.length - 1]).toEqual({
+      source: 'Auto/Finance/GBM',
+      target: 'Auto/Finance/Mercado Pago',
+      targetParent: 'Auto/Finance/Mercado Pago',
+    });
+  });
+
+  test('finds only labels belonging to a retired institution path', () => {
+    expect(listFinancialInstitutionLabelNames([
+      'Auto/Finance/GBM',
+      'Auto/Finance/GBM/Otros',
+      'Auto/Finance/GBMX/Otros',
+      'Auto/Finance/Mercado Pago',
+    ], 'GBM')).toEqual([
+      'Auto/Finance/GBM',
+      'Auto/Finance/GBM/Otros',
+    ]);
+  });
+
+  test('limits Afore rehoming to the former Banamex hierarchy', () => {
+    expect(buildFinancialInstitutionRehomeSourceLabelNames({ source: 'Banamex' })).toEqual(
+      expect.arrayContaining([
+        'Auto/Finance/Banamex',
+        'Auto/Finance/Banamex/Estados de cuenta',
+        'Auto/Finance/Banamex/Inversiones',
+      ])
+    );
+    expect(buildFinancialInstitutionRehomeSourceLabelNames({ source: '' })).toEqual([]);
+  });
+
+  test('keeps a current Infonavit access notice as a statement without an attachment', () => {
+    const rule = configModule.FINANCIAL_INBOX_RULES.find(
+      (candidate) => candidate.name === 'Bank/Infonavit'
+    );
+    expect(resolveInboxRuleLabelNames(rule, [{
+      getSubject: () => 'Ya está disponible tu estado de cuenta',
+      getPlainBody: () => 'Consulta el documento actual en Mi Cuenta Infonavit.',
+      getAttachments: () => [],
+    }], false)).toEqual([
+      'Auto/Finance/Infonavit',
+      'Auto/Finance/Infonavit/Estados de cuenta',
+    ]);
+  });
+
+  test('does not use the generic word Afore as the Afore child category', () => {
+    const rule = configModule.FINANCIAL_INBOX_RULES.find(
+      (candidate) => candidate.name === 'Bank/Afore'
+    );
+    expect(resolveInboxRuleLabelNames(rule, [{
+      getSubject: () => 'Afore Banamex es calificada como excelente',
+      getAttachments: () => [],
+    }], false)).toEqual([
+      'Auto/Finance/Afore',
+      'Auto/Finance/Afore/Otros',
+    ]);
+  });
+
+  test('limits the Ualá ad hoc repair to the audited exact subject', () => {
+    expect(buildVerifiedFinancialCorrectionPolicies()).toEqual([{
+      source: 'Auto/Finance/Uala/Transacciones',
+      target: 'Auto/Finance/Uala/Promociones y beneficios',
+      parent: 'Auto/Finance/Uala',
+      exactSubject: 'Cada transacción es una anotación.',
+    }]);
   });
 
   test('rejects educational statement mentions without a document or access notice', () => {

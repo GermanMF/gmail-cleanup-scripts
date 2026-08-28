@@ -11,7 +11,8 @@ For work on a configured account, use an ignored `docs/HANDOVER.local.md`. If it
 - Both mailbox jobs share a script lock; a locked skip is expected and safe.
 - The temporary handler repairs labels first, backfills missing bank children second, and removes only its own trigger after an empty, error-free cycle.
 - Finance repair/backfill is label-only and must preserve read/archive state.
-- Automatic retention Trash and delayed record/routine archive are rollout gates, not handover defaults.
+- Delayed receipt/order archive is enabled after a reviewed bounded rollout;
+  automatic retention Trash remains a separate disabled rollout gate.
 
 ## What the next agent should do first
 
