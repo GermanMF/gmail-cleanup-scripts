@@ -6,13 +6,9 @@ This is the authoritative next-work list. Historical accomplishments belong in `
 
 ## High priority — live finance rollout
 
-Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`. At handover time, finance repair was still ahead of historical child-label backfill.
+Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`.
 
-- [ ] Confirm whether `runScheduledFinancialSublabelBackfill` has completed and removed its temporary trigger.
-- [ ] After completion, run the read-only finance repair/backfill audits and record final counts in `docs/HANDOVER.md`.
-- [ ] Sample Ualá child labels after backfill. Verify promotion versus transaction and investment/service examples from `docs/FINANCE_TAXONOMY.md`.
-- [ ] Sample every institution for false `Estados de cuenta` assignments; attachment-less results must contain explicit current-document access/download evidence.
-- [ ] Once the temporary trigger is gone and audits are clean, decide whether to clear the two finance confirmation tokens and deploy that cleanup.
+- [x] Re-audit the 269 historical parent-only threads outside the configured ten-year lookback before deciding on a separate batch.
 
 ## Medium priority — inbox rollout decisions
 
@@ -26,9 +22,11 @@ Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`. A
   `auditHistoricalStagingLabelRepair` before any further historical batch.
 - [x] Review that audit and complete one approved label-only repair that
   rehomes only affected staged threads; no archive or Trash.
-- [ ] Review accumulated `Auto/Finance/Records` and `Auto/LowValue/Routine Updates` samples before changing `ENABLE_INBOX_RECORD_ARCHIVE`.
-- [ ] Run `auditInboxRuleRetention` and review every affected low-value label before considering `ENABLE_RULE_RETENTION_TRASH`.
-- [ ] Re-audit hourly `runInboxRules` duration after finance maintenance completes; normal runs should stay below the lock-contention window.
+- [x] Review accumulated receipt/order samples before considering `ENABLE_DOCUMENT_RECORD_ARCHIVE`.
+- [x] Run `auditInboxRuleRetention` and review every affected low-value label before considering `ENABLE_RULE_RETENTION_TRASH`.
+- [x] Re-audit hourly `runInboxRules` duration after finance maintenance completes; normal runs should stay below the lock-contention window.
+- [ ] Diagnose the remaining seven-day `runInboxRules` error-rate history
+  read-only before changing the stable hourly trigger.
 - [ ] Add any newly observed bank-specific vocabulary only with real examples and regression tests.
 
 ## Low priority / deferred
@@ -39,7 +37,22 @@ Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`. A
 
 ## Recently completed
 
-- [x] Deploy shared institution/child finance taxonomy for 12 institutions.
+- [x] Complete a bounded receipt/order archive rollout and verify attachment
+  protections; keep the rollout gate disabled outside an approved run.
+- [x] Add dedicated Afore and Infonavit finance parents, rehome all 54 verified
+  threads with exactly one child, remove stale Banamex assignments, and clear
+  the temporary token without changing read/archive state.
+- [x] Audit all 293 `Auto/LowValue/Routine Updates` threads and retire the catch-all Updates lane from inbox, backlog, and retention configuration.
+- [x] Add observed `uala.mx` and `mercadopago.com` finance sender domains.
+- [x] Retire the redundant cross-institution `Auto/Finance/Records` rule after reviewing its complete live sample; preserve institution and subcategory labels.
+- [x] Verify the temporary finance scheduler self-removed; retain only the hourly `runInboxRules` trigger.
+- [x] Consolidate all GBM-origin parent/child assignments into Mercado Pago without changing read/archive state.
+- [x] Correct the exact Ualá promotion false positive and verify the source pattern count returned to zero.
+- [x] Reject 18 apparent statement candidates that lacked current-document evidence; align the audit with the repair evidence gate.
+- [x] Backfill two newly arrived parent-only threads and verify zero missing children for all 10 institutions within the ten-year lookback.
+- [x] Delete the four empty retired GBM/BBVA labels and verify both paths are absent.
+- [x] Clear all finance repair/backfill/ad hoc confirmation tokens after the reviewed live batch.
+- [x] Deploy the original shared institution/child finance taxonomy for 12 institutions.
 - [x] Add Ualá-specific promotion and investment vocabulary.
 - [x] Require attachment or explicit access/download evidence for statements.
 - [x] Repair verified Santander statement false positives into Security and Service Notices.

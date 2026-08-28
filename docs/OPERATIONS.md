@@ -29,6 +29,9 @@ npm run push                  # live Apps Script deployment; approval required
 - `auditInboxRules`
 - `auditFinancialSublabelBackfill`
 - `auditFinancialLabelRepair`
+- `auditFinancialTaxonomyMigrationAdHoc`
+- `auditFinancialInstitutionRehomeAdHoc`
+- `auditVerifiedFinancialCorrectionsAdHoc`
 - `auditInboxBacklog`
 - `auditHistoricalInboxBackfill`
 - `auditHistoricalStagingLabelRepair`
@@ -46,6 +49,10 @@ npm run push                  # live Apps Script deployment; approval required
 - `repairFinancialLabels` — finance labels only; read/archive state unchanged.
 - `backfillFinancialSublabels` — parent/child finance labels only.
 - `runScheduledFinancialSublabelBackfill` — repair, then backfill, then self-remove trigger.
+- `migrateFinancialTaxonomyAdHoc` — moves GBM parent/children to Mercado Pago only.
+- `rehomeFinancialInstitutionsAdHoc` — query-scoped Afore/Infonavit parent and
+  child reassignment; token-gated and label-only.
+- `repairVerifiedFinancialCorrectionsAdHoc` — exact-subject, label-only corrections.
 - `stageInboxBacklog` — labels and archives; no Trash.
 - `backfillHistoricalInbox` — bounded category backfill; labels first and can
   archive only safety-cleared Promotions when both dedicated gates are enabled.
@@ -64,19 +71,20 @@ npm run push                  # live Apps Script deployment; approval required
 - `emptyConfiguredLowValueLabel`
 - migration cleanup functions that trash duplicate/orphaned Drive items
 - trigger installation/removal
+- `deleteRetiredFinancialLabelsAdHoc` — deletes only empty retired finance labels.
 
 Run high-impact entry points only after the matching audit and explicit approval.
 
 ## Active safety gates
 
 - `CONFIG.DRY_RUN`: general write guard; currently `false` in deployed source.
-- `ENABLE_INBOX_RECORD_ARCHIVE`: currently `false`.
+- `ENABLE_DOCUMENT_RECORD_ARCHIVE`: currently `false`; enable only for a separately reviewed rollout.
 - `ENABLE_RULE_RETENTION_TRASH`: currently `false`.
 - `INBOX_BACKLOG_CONFIRMATION`: empty by default.
 - Historical backfill and historical staging-repair tokens are empty by
   default; Promotions archive remains false and the manual policy pin must be
   named explicitly for an approved batch.
-- Finance backfill and repair tokens are populated while the temporary scheduler is active.
+- Finance backfill, repair, migration, and ad hoc correction tokens are empty by default.
 - Destructive label-emptying requires both a target label and exact typed confirmation.
 
 After the temporary finance scheduler completes and self-removes, consider clearing its two confirmation tokens in a reviewed follow-up deployment. Do not clear them while expecting the trigger to continue.
@@ -172,6 +180,36 @@ After the temporary finance scheduler completes and self-removes, consider clear
 8. Observe one non-overlapping execution.
 9. Inspect logs and verify Gmail counts or labels.
 10. Update the local handover if production state changed; sanitize any reusable tracked documentation.
+
+## Ad hoc finance taxonomy consolidation
+
+1. Run `auditFinancialTaxonomyMigrationAdHoc()` and
+   `auditVerifiedFinancialCorrectionsAdHoc()` read-only.
+2. Confirm there are no unknown GBM child labels and no active mailbox execution.
+3. Temporarily set the exact migration/correction tokens only for the reviewed run.
+4. Run `migrateFinancialTaxonomyAdHoc()` until `labelMoves=0`, then
+   `repairFinancialLabels()` and `repairVerifiedFinancialCorrectionsAdHoc()`.
+5. Re-run the read-only finance audits and verify parent+child coexistence under
+   Mercado Pago.
+6. Independently authorize `deleteRetiredFinancialLabelsAdHoc()` only after all
+   GBM and BBVA labels report zero threads. It refuses to delete any non-empty label.
+7. Clear every temporary token in a follow-up deployment.
+
+None of these functions changes read, archive, spam, or Trash state.
+
+## Query-scoped Afore/Infonavit rehome
+
+1. Run `auditFinancialInstitutionRehomeAdHoc()` and review totals, missing
+   target parents, and stale Banamex assignments.
+2. Verify no Apps Script execution is active and no temporary trigger exists.
+3. Set `FINANCIAL_INSTITUTION_REHOME_CONFIRMATION` to the exact reviewed token,
+   deploy with explicit approval, and run `rehomeFinancialInstitutionsAdHoc()`.
+4. Repeat until `changed=0`, rerun the read-only audit, and verify each target
+   thread has its parent plus exactly one child.
+5. Clear the token in a follow-up deployment.
+
+The operation never changes read/archive state and removes only old finance
+labels on threads matched by the reviewed institution query.
 
 ## Recovery guidance
 

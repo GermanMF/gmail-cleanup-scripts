@@ -151,8 +151,8 @@ function buildInboxRuleQuery(rule) {
   if (minimumAgeDays > 0) queryParts.push(`older_than:${minimumAgeDays}d`);
 
   if (
-    rule.requiresRecordArchiveEnabled &&
-    !CONFIG.ENABLE_INBOX_RECORD_ARCHIVE &&
+    rule.archiveGate &&
+    !CONFIG[rule.archiveGate] &&
     GmailApp.getUserLabelByName(rule.label)
   ) {
     // During the sampling phase, label once and avoid reprocessing hourly.
@@ -175,9 +175,7 @@ function buildInboxRuleQuery(rule) {
 
 /** True when an archive rule is active under the current rollout gates. */
 function isInboxRuleArchiveEnabled(rule) {
-  return !!rule.archive && (
-    !rule.requiresRecordArchiveEnabled || CONFIG.ENABLE_INBOX_RECORD_ARCHIVE
-  );
+  return !!rule.archive && (!rule.archiveGate || !!CONFIG[rule.archiveGate]);
 }
 
 /** Resolves the parent and optional subject-specific child label for a rule. */
@@ -633,7 +631,12 @@ function auditFinancialLabelRepair() {
         '-in:spam',
         '-in:trash',
       ].join(' ');
-      const count = countThreads(query, CONFIG.MAX_COUNT_PER_QUERY);
+      const count = subcategory.requiresStatementEvidence
+        ? filterFinancialThreadsForSubcategory(
+          GmailApp.search(query, 0, CONFIG.MAX_COUNT_PER_QUERY),
+          subcategory
+        ).length
+        : countThreads(query, CONFIG.MAX_COUNT_PER_QUERY);
       if (count) Logger.log(`${rule.name}: Otros -> ${subcategory.name}: ${count}`);
     });
   });
@@ -654,6 +657,454 @@ function auditFinancialLabelRepair() {
     Logger.log(`${policy.label}: ${count}${capped} obsolete financial assignment(s)`);
   });
   Logger.log('No labels or messages were changed.');
+}
+
+function buildFinancialTaxonomyMigrationMappings(migration) {
+  const sourceParent = `Auto/Finance/${migration.source}`;
+  const targetParent = `Auto/Finance/${migration.target}`;
+  return FINANCIAL_SUBLABELS.map(function (subcategory) {
+    return {
+      source: `${sourceParent}/${subcategory.name}`,
+      target: `${targetParent}/${subcategory.name}`,
+      targetParent,
+    };
+  }).concat([{ source: sourceParent, target: targetParent, targetParent }]);
+}
+
+function listFinancialInstitutionLabelNames(labelNames, institutionName) {
+  const parent = `Auto/Finance/${institutionName}`;
+  return labelNames.filter(function (labelName) {
+    return labelName === parent || labelName.indexOf(`${parent}/`) === 0;
+  }).sort();
+}
+
+function buildFinancialInstitutionRehomeSourceLabelNames(policy) {
+  if (!policy || !policy.source) return [];
+  const parent = `Auto/Finance/${policy.source}`;
+  return [parent].concat(FINANCIAL_SUBLABELS.map(function (subcategory) {
+    return `${parent}/${subcategory.name}`;
+  }));
+}
+
+/** Read-only inventory for query-scoped institution/product rehoming. */
+function auditFinancialInstitutionRehomeAdHoc() {
+  Logger.log('=== FINANCIAL INSTITUTION REHOME AUDIT (READ-ONLY) ===');
+  const maximum = CONFIG.MAX_COUNT_PER_QUERY;
+  FINANCIAL_INSTITUTION_REHOMES.forEach(function (policy) {
+    const targetParent = `Auto/Finance/${policy.target}`;
+    const total = countThreads(`${policy.query} -in:spam -in:trash`, maximum);
+    const assigned = countThreads(
+      `${policy.query} label:"${targetParent}" -in:spam -in:trash`,
+      maximum
+    );
+    Logger.log(
+      `${policy.target}: total=${total}, targetParent=${assigned}, missingParent=${total - assigned}`
+    );
+    buildFinancialInstitutionRehomeSourceLabelNames(policy).forEach(function (labelName) {
+      const count = countThreads(
+        `${policy.query} label:"${labelName}" -in:spam -in:trash`,
+        maximum
+      );
+      if (count) Logger.log(`${labelName}: ${count} stale assignment(s)`);
+    });
+  });
+  Logger.log('No labels or messages were changed.');
+}
+
+/**
+ * Adds the exact target parent/child and removes only query-matched source
+ * finance labels. Read, archive, spam, Trash, and all unrelated labels remain
+ * untouched.
+ */
+function rehomeFinancialInstitutionsAdHoc() {
+  if (
+    !CONFIG.DRY_RUN &&
+    CONFIG.FINANCIAL_INSTITUTION_REHOME_CONFIRMATION !== 'REHOME_AFORE_AND_INFONAVIT'
+  ) {
+    Logger.log('Financial institution rehome confirmation token missing. Nothing changed.');
+    return { changed: 0, errors: 0, skipped: true };
+  }
+
+  const executionLock = LockService.getScriptLock();
+  if (!executionLock.tryLock(5000)) {
+    Logger.log('Financial institution rehome skipped — another mailbox execution is running.');
+    return { changed: 0, errors: 0, skipped: true };
+  }
+
+  try {
+    const rulesByInstitution = {};
+    FINANCIAL_INBOX_RULES.forEach(function (rule) {
+      rulesByInstitution[rule.name.replace(/^Bank\//, '')] = rule;
+    });
+    const labelsByName = {};
+    GmailApp.getUserLabels().forEach(function (label) {
+      labelsByName[label.getName()] = label;
+    });
+    let remaining = CONFIG.FINANCIAL_LABEL_REPAIR_BATCH_SIZE;
+    let changed = 0;
+    let errors = 0;
+
+    FINANCIAL_INSTITUTION_REHOMES.forEach(function (policy) {
+      if (remaining <= 0) return;
+      const targetRule = rulesByInstitution[policy.target];
+      if (!targetRule) {
+        errors++;
+        Logger.log(`Financial institution rehome missing target rule: ${policy.target}`);
+        return;
+      }
+      const threads = GmailApp.search(
+        `${policy.query} -in:spam -in:trash`,
+        0,
+        remaining
+      );
+      threads.forEach(function (thread) {
+        if (remaining <= 0) return;
+        try {
+          const currentLabelNames = new Set(thread.getLabels().map(function (label) {
+            return label.getName();
+          }));
+          const targetLabelNames = resolveInboxRuleLabelNames(
+            targetRule,
+            thread.getMessages(),
+            false
+          );
+          const sourceLabelNames = buildFinancialInstitutionRehomeSourceLabelNames(policy)
+            .filter(function (labelName) { return currentLabelNames.has(labelName); });
+          const missingTargetNames = targetLabelNames.filter(function (labelName) {
+            return !currentLabelNames.has(labelName);
+          });
+          if (!sourceLabelNames.length && !missingTargetNames.length) return;
+
+          if (CONFIG.DRY_RUN) {
+            Logger.log(
+              `[DRY RUN] Would rehome subject=${thread.getFirstMessageSubject()} ` +
+              `add=${missingTargetNames.join(', ') || 'none'} ` +
+              `remove=${sourceLabelNames.join(', ') || 'none'}`
+            );
+          } else {
+            missingTargetNames.forEach(function (labelName) {
+              thread.addLabel(getOrCreateLabel(labelName));
+            });
+            sourceLabelNames.forEach(function (labelName) {
+              const label = labelsByName[labelName];
+              if (label) thread.removeLabel(label);
+            });
+          }
+          changed++;
+          remaining--;
+        } catch (error) {
+          errors++;
+          Logger.log(
+            `Financial institution rehome error for subject=${thread.getFirstMessageSubject()}: ` +
+            error
+          );
+        }
+      });
+    });
+
+    Logger.log(
+      `Financial institution rehome complete — changed=${changed}, errors=${errors}. ` +
+      'Read/archive state unchanged.'
+    );
+    return { changed, errors, skipped: false };
+  } finally {
+    executionLock.releaseLock();
+  }
+}
+
+function countFinancialLabelThreadsForAudit(label, maximum) {
+  if (!label) return 0;
+  return label.getThreads(0, maximum).length;
+}
+
+/** Read-only preflight for the one-time GBM -> Mercado Pago label migration. */
+function auditFinancialTaxonomyMigrationAdHoc() {
+  Logger.log('=== FINANCIAL TAXONOMY MIGRATION AUDIT (READ-ONLY) ===');
+  const labelsByName = {};
+  GmailApp.getUserLabels().forEach(function (label) {
+    labelsByName[label.getName()] = label;
+  });
+  const maximum = CONFIG.MAX_COUNT_PER_QUERY;
+
+  FINANCIAL_LABEL_MIGRATIONS.forEach(function (migration) {
+    buildFinancialTaxonomyMigrationMappings(migration).forEach(function (mapping) {
+      const label = labelsByName[mapping.source];
+      if (!label) return;
+      const count = countFinancialLabelThreadsForAudit(label, maximum);
+      const capped = count >= maximum ? '+' : '';
+      Logger.log(`${mapping.source} -> ${mapping.target}: ${count}${capped} thread(s)`);
+    });
+  });
+
+  FINANCIAL_RETIRED_INSTITUTIONS.forEach(function (institutionName) {
+    const labelNames = listFinancialInstitutionLabelNames(
+      Object.keys(labelsByName),
+      institutionName
+    );
+    if (!labelNames.length) {
+      Logger.log(`Retired label ${institutionName}: absent`);
+      return;
+    }
+    labelNames.forEach(function (labelName) {
+      const count = countFinancialLabelThreadsForAudit(labelsByName[labelName], maximum);
+      const capped = count >= maximum ? '+' : '';
+      Logger.log(`Retired label ${labelName}: ${count}${capped} thread(s)`);
+    });
+  });
+  Logger.log('No labels or messages were changed.');
+}
+
+/**
+ * Consolidates retired GBM labels into Mercado Pago in bounded label-only batches.
+ * Unknown GBM children block the run instead of being guessed or discarded.
+ */
+function migrateFinancialTaxonomyAdHoc() {
+  if (
+    !CONFIG.DRY_RUN &&
+    CONFIG.FINANCIAL_TAXONOMY_MIGRATION_CONFIRMATION !== 'MIGRATE_GBM_TO_MERCADO_PAGO'
+  ) {
+    Logger.log('Financial taxonomy migration confirmation token missing. Nothing changed.');
+    return { changed: 0, errors: 0, skipped: true };
+  }
+
+  const executionLock = LockService.getScriptLock();
+  if (!executionLock.tryLock(5000)) {
+    Logger.log('Financial taxonomy migration skipped — another mailbox execution is running.');
+    return { changed: 0, errors: 0, skipped: true };
+  }
+
+  try {
+    const labelsByName = {};
+    GmailApp.getUserLabels().forEach(function (label) {
+      labelsByName[label.getName()] = label;
+    });
+    let remaining = CONFIG.FINANCIAL_LABEL_REPAIR_BATCH_SIZE;
+    let changed = 0;
+    let errors = 0;
+
+    FINANCIAL_LABEL_MIGRATIONS.forEach(function (migration) {
+      if (remaining <= 0) return;
+      const mappings = buildFinancialTaxonomyMigrationMappings(migration);
+      const allowedSources = new Set(mappings.map(function (mapping) {
+        return mapping.source;
+      }));
+      const existingSourceNames = listFinancialInstitutionLabelNames(
+        Object.keys(labelsByName),
+        migration.source
+      );
+      const unknownSources = existingSourceNames.filter(function (labelName) {
+        return !allowedSources.has(labelName);
+      });
+      if (unknownSources.length) {
+        errors += unknownSources.length;
+        Logger.log(
+          `Financial taxonomy migration blocked by unknown ${migration.source} label(s): ` +
+          unknownSources.join(', ')
+        );
+        return;
+      }
+
+      mappings.forEach(function (mapping) {
+        if (remaining <= 0) return;
+        const sourceLabel = labelsByName[mapping.source];
+        if (!sourceLabel) return;
+        const threads = sourceLabel.getThreads(
+          0,
+          Math.min(remaining, CONFIG.FINANCIAL_LABEL_REPAIR_BATCH_SIZE)
+        );
+        if (!threads.length) return;
+        try {
+          if (CONFIG.DRY_RUN) {
+            Logger.log(
+              `[DRY RUN] Would move ${threads.length} thread(s) from ` +
+              `${mapping.source} to ${mapping.target}.`
+            );
+          } else {
+            getOrCreateLabel(mapping.targetParent).addToThreads(threads);
+            if (mapping.target !== mapping.targetParent) {
+              getOrCreateLabel(mapping.target).addToThreads(threads);
+            }
+            sourceLabel.removeFromThreads(threads);
+          }
+          changed += threads.length;
+          remaining -= threads.length;
+        } catch (error) {
+          errors += threads.length;
+          Logger.log(
+            `Financial taxonomy migration error for ${mapping.source} ` +
+            `(${threads.length} thread(s)): ${error}`
+          );
+        }
+      });
+    });
+
+    Logger.log(
+      `Financial taxonomy migration complete — labelMoves=${changed}, errors=${errors}. ` +
+      'Read/archive state unchanged.'
+    );
+    return { changed, errors, skipped: false };
+  } finally {
+    executionLock.releaseLock();
+  }
+}
+
+function buildVerifiedFinancialCorrectionPolicies() {
+  return [{
+    source: 'Auto/Finance/Uala/Transacciones',
+    target: 'Auto/Finance/Uala/Promociones y beneficios',
+    parent: 'Auto/Finance/Uala',
+    exactSubject: 'Cada transacción es una anotación.',
+  }];
+}
+
+/** Read-only count of the exact, manually verified Ualá correction. */
+function auditVerifiedFinancialCorrectionsAdHoc() {
+  Logger.log('=== VERIFIED FINANCIAL CORRECTIONS AUDIT (READ-ONLY) ===');
+  buildVerifiedFinancialCorrectionPolicies().forEach(function (policy) {
+    const sourceLabel = GmailApp.getUserLabelByName(policy.source);
+    if (!sourceLabel) {
+      Logger.log(`${policy.source}: source label absent`);
+      return;
+    }
+    const exactSubject = normalizeForMatching(policy.exactSubject);
+    const count = sourceLabel.getThreads(0, CONFIG.MAX_COUNT_PER_QUERY).filter(function (thread) {
+      return thread.getMessages().some(function (message) {
+        return normalizeForMatching(message.getSubject()) === exactSubject;
+      });
+    }).length;
+    Logger.log(`${policy.source} -> ${policy.target}: ${count} verified thread(s)`);
+  });
+  Logger.log('No labels or messages were changed.');
+}
+
+/** Applies only exact-subject corrections already verified by the live audit. */
+function repairVerifiedFinancialCorrectionsAdHoc() {
+  if (
+    !CONFIG.DRY_RUN &&
+    CONFIG.FINANCIAL_VERIFIED_CORRECTIONS_CONFIRMATION !== 'APPLY_VERIFIED_FINANCE_FIXES'
+  ) {
+    Logger.log('Verified financial correction token missing. Nothing changed.');
+    return { changed: 0, errors: 0, skipped: true };
+  }
+
+  const executionLock = LockService.getScriptLock();
+  if (!executionLock.tryLock(5000)) {
+    Logger.log('Verified financial corrections skipped — another mailbox execution is running.');
+    return { changed: 0, errors: 0, skipped: true };
+  }
+
+  try {
+    let changed = 0;
+    let errors = 0;
+    buildVerifiedFinancialCorrectionPolicies().forEach(function (policy) {
+      const sourceLabel = GmailApp.getUserLabelByName(policy.source);
+      if (!sourceLabel) return;
+      const exactSubject = normalizeForMatching(policy.exactSubject);
+      const threads = sourceLabel.getThreads(0, CONFIG.FINANCIAL_LABEL_REPAIR_BATCH_SIZE)
+        .filter(function (thread) {
+          return thread.getMessages().some(function (message) {
+            return normalizeForMatching(message.getSubject()) === exactSubject;
+          });
+        });
+      if (!threads.length) return;
+      try {
+        if (CONFIG.DRY_RUN) {
+          Logger.log(
+            `[DRY RUN] Would move ${threads.length} verified thread(s) from ` +
+            `${policy.source} to ${policy.target}.`
+          );
+        } else {
+          getOrCreateLabel(policy.parent).addToThreads(threads);
+          getOrCreateLabel(policy.target).addToThreads(threads);
+          sourceLabel.removeFromThreads(threads);
+        }
+        changed += threads.length;
+      } catch (error) {
+        errors += threads.length;
+        Logger.log(
+          `Verified financial correction error for ${policy.source} ` +
+          `(${threads.length} thread(s)): ${error}`
+        );
+      }
+    });
+    Logger.log(
+      `Verified financial corrections complete — changed=${changed}, errors=${errors}. ` +
+      'Read/archive state unchanged.'
+    );
+    return { changed, errors, skipped: false };
+  } finally {
+    executionLock.releaseLock();
+  }
+}
+
+/**
+ * Deletes only empty labels retired from the finance taxonomy. This must run
+ * after migration and is independently confirmation-gated.
+ */
+function deleteRetiredFinancialLabelsAdHoc() {
+  if (
+    !CONFIG.DRY_RUN &&
+    CONFIG.FINANCIAL_RETIRED_LABEL_DELETION_CONFIRMATION !== 'DELETE_EMPTY_RETIRED_FINANCE_LABELS'
+  ) {
+    Logger.log('Retired finance label deletion token missing. Nothing changed.');
+    return { deleted: 0, blockers: 0, errors: 0, skipped: true };
+  }
+
+  const executionLock = LockService.getScriptLock();
+  if (!executionLock.tryLock(5000)) {
+    Logger.log('Retired finance label deletion skipped — another mailbox execution is running.');
+    return { deleted: 0, blockers: 0, errors: 0, skipped: true };
+  }
+
+  try {
+    const labelsByName = {};
+    GmailApp.getUserLabels().forEach(function (label) {
+      labelsByName[label.getName()] = label;
+    });
+    let retiredLabelNames = [];
+    FINANCIAL_RETIRED_INSTITUTIONS.forEach(function (institutionName) {
+      retiredLabelNames = retiredLabelNames.concat(listFinancialInstitutionLabelNames(
+        Object.keys(labelsByName),
+        institutionName
+      ));
+    });
+    const blockers = retiredLabelNames.filter(function (labelName) {
+      return labelsByName[labelName].getThreads(0, 1).length > 0;
+    });
+    if (blockers.length) {
+      Logger.log(
+        'Retired finance label deletion blocked; non-empty label(s): ' + blockers.join(', ')
+      );
+      return { deleted: 0, blockers: blockers.length, errors: 0, skipped: true };
+    }
+
+    retiredLabelNames.sort(function (left, right) {
+      const depthDifference = right.split('/').length - left.split('/').length;
+      return depthDifference || left.localeCompare(right);
+    });
+    let deleted = 0;
+    let errors = 0;
+    retiredLabelNames.forEach(function (labelName) {
+      try {
+        if (CONFIG.DRY_RUN) {
+          Logger.log(`[DRY RUN] Would delete empty retired label ${labelName}.`);
+        } else {
+          labelsByName[labelName].deleteLabel();
+        }
+        deleted++;
+      } catch (error) {
+        errors++;
+        Logger.log(`Retired finance label deletion error for ${labelName}: ${error}`);
+      }
+    });
+    Logger.log(
+      `Retired finance label deletion complete — deleted=${deleted}, errors=${errors}. ` +
+      'Messages and read/archive state unchanged.'
+    );
+    return { deleted, blockers: 0, errors, skipped: false };
+  } finally {
+    executionLock.releaseLock();
+  }
 }
 
 /** Runs repair first, then backfill, and removes the trigger after both finish. */
@@ -1538,5 +1989,9 @@ if (typeof module !== 'undefined') {
     buildFinancialSublabelSearchQuery,
     buildFinancialSublabelSearchQueries,
     buildFinancialSublabelSubjectQuery,
+    buildFinancialTaxonomyMigrationMappings,
+    listFinancialInstitutionLabelNames,
+    buildFinancialInstitutionRehomeSourceLabelNames,
+    buildVerifiedFinancialCorrectionPolicies,
   };
 }

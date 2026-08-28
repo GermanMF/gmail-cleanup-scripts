@@ -38,7 +38,7 @@ Gmail_Attachments_Archive/
 - **Smart filtering** — inline MIME images are excluded while small legitimate attachments are preserved. Exclude specific senders or domains via `EXCLUDED_SENDERS`.
 - **Manual review lane** — failed/incomplete backups, excluded senders, and threads without real attachments receive `Cleanup_Review` and are never auto-deleted.
 - **Staged bulk cleanup** — old attachment-free Promotions, Social, and Updates are archived and labeled for review; only manually confirmed threads can be trashed.
-- **Periodic inbox rules** — ordered `Auto/...` rules separate action-required, record, and routine mail while protecting security, real attachments, starred mail, and conversations containing sent messages.
+- **Periodic inbox rules** — ordered `Auto/...` rules separate action-required, document-record, and routine mail while protecting security, real attachments, starred mail, and conversations containing sent messages.
 - **Evidence-aware financial sublabels** — bank mail receives an institution parent plus a message-type child; statements additionally require a document or explicit current-document access/download evidence.
 - **Reversible backlog drain** — read-only audits plus confirmation-gated, batched label/archive operations reduce historical Inbox debt without using Trash.
 - **Low-value retention** — Promotions, Social, and safe Updates can expire after configurable retention windows; automatic Trash is disabled by default.
@@ -70,7 +70,7 @@ const CONFIG = {
   REPORT_EMAIL:         '',                          // recipient (defaults to active user)
   ENABLE_DASHBOARD:     false,                       // append stats to Google Sheets
   DASHBOARD_SPREADSHEET_ID: '',                      // sheet ID (auto-created if empty)
-  ENABLE_INBOX_RECORD_ARCHIVE: false,                // gate new record/routine archives
+  ENABLE_DOCUMENT_RECORD_ARCHIVE: false,             // gate receipt/order archive rollout
 };
 ```
 
@@ -90,6 +90,11 @@ const CONFIG = {
 | `backfillFinancialSublabels()` | Confirmation-gated label-only historical financial classification |
 | `auditFinancialLabelRepair()` | Read-only counts for incorrect/obsolete finance assignments |
 | `repairFinancialLabels()` | Label-only repair; never changes read/archive state |
+| `auditFinancialTaxonomyMigrationAdHoc()` | Read-only GBM/Mercado Pago consolidation preflight |
+| `migrateFinancialTaxonomyAdHoc()` | Confirmation-gated GBM-to-Mercado Pago label migration |
+| `auditVerifiedFinancialCorrectionsAdHoc()` | Read-only exact-subject correction audit |
+| `repairVerifiedFinancialCorrectionsAdHoc()` | Confirmation-gated exact-subject label repair |
+| `deleteRetiredFinancialLabelsAdHoc()` | Deletes only confirmed-empty GBM/BBVA labels |
 | `runScheduledFinancialSublabelBackfill()` | Repairs first, then backfills, then removes its temporary trigger |
 | `installFinancialSublabelBackfillSchedule()` | Installs the idempotent ten-minute temporary trigger |
 | `removeFinancialSublabelBackfillSchedule()` | Removes only the temporary finance trigger |
@@ -206,14 +211,15 @@ attachment pipeline retry it on a later run.
 3. Set `DRY_RUN: true` and run `runInboxRules()` manually. Review the execution log.
 4. Set `DRY_RUN: false`, run it once, and inspect the new `Auto/...` labels.
 5. Run `installInboxAutomation()` to classify recent Inbox mail every hour.
-6. Keep `ENABLE_INBOX_RECORD_ARCHIVE: false` while sampling the new record and
-   routine labels. Enable it only after their contents look correct.
+6. Sample receipt/order labels with `ENABLE_DOCUMENT_RECORD_ARCHIVE: false`.
+   Enable it only after their contents look correct and a reversible rollout is approved.
 7. Leave `ENABLE_RULE_RETENTION_TRASH: false` until the low-value labels have
    been reviewed. Run `auditInboxRuleRetention()` before enabling daily retention.
 
 Financial mail is classified into a two-level hierarchy. The same child
-taxonomy is reused for Santander, Banamex, BBVA, Invex, GBM, Mercado Pago,
-PayPal, Hey Banco, Nu, Revolut, Uala, and Openbank:
+taxonomy is reused for Santander, Banamex, Invex, Mercado Pago, PayPal,
+Hey Banco, Nu, Revolut, Uala, and Openbank. Mercado Pago intentionally includes
+`mercadopago.com.mx`, `mercadopago.com`, and `gbm.com.mx` mail in one institution path:
 
 ```text
 Auto/Finance/
@@ -285,13 +291,14 @@ own trigger after a full empty, error-free cycle; see
 Default incoming behavior:
 
 - Security and genuinely action-required finance/Updates mail stay in Inbox.
-- With `ENABLE_INBOX_RECORD_ARCHIVE: true`, routine financial records, receipts,
-  and completed orders are marked read and archived after 14 days only when they
-  have no real attachment and pass runtime safety checks.
+- Receipts and completed orders remain label-only while
+  `ENABLE_DOCUMENT_RECORD_ARCHIVE` is false. When separately enabled, eligible
+  records are marked read and archived after 14 days only when they have no
+  real attachment and pass runtime safety checks.
 - Real attachments stay in Inbox and receive document/financial labels.
 - Safe Promotions and Social mail are labeled, marked read, and archived.
-- Safe routine Updates are initially label-only; the same feature flag enables
-  marking them read and archiving them after seven days.
+- There is no catch-all routine Updates archive lane; explicit reviewed rules own
+  security, action, document, finance, digest, and promotion mail.
 - A low-value match from a protected sender, protected conversation, or thread
   with a real attachment is sent to `Cleanup_Review/Protected` instead.
 
