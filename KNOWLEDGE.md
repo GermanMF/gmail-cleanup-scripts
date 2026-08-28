@@ -24,7 +24,10 @@ This file records stable decisions and non-obvious invariants. Use `docs/HANDOVE
 - Institution classifiers are non-terminal so a bank promotion can receive both a bank label and a low-value label.
 - Real attachments, protected domains/content, starred/important state, and sent-thread participation can block low-value archive/Trash behavior.
 - `runInboxRules` and finance maintenance share a script lock.
-- `ENABLE_INBOX_RECORD_ARCHIVE` and `ENABLE_RULE_RETENTION_TRASH` are rollout gates, not ordinary tuning switches.
+- `ENABLE_DOCUMENT_RECORD_ARCHIVE` was enabled only after reviewed receipt/order
+  sampling and a bounded reversible rollout. `ENABLE_RULE_RETENTION_TRASH`
+  remains a separate disabled rollout gate, not an ordinary tuning switch.
+- Do not recreate a catch-all `Routine Updates` label from Gmail's `category:updates`; explicit security, action, document, finance, digest, and promotion rules must own those messages.
 
 ## Finance model
 
@@ -32,8 +35,17 @@ This file records stable decisions and non-obvious invariants. Use `docs/HANDOVE
 - All institutions share the same child names; bank-specific polymorphism is limited to vocabulary and precedence.
 - Statements need a document or explicit current-document access/download evidence.
 - A subject containing `estado de cuenta` can still be Security, Service, or Other.
+- Do not add a cross-institution finance `Records` label: institution plus message-type child labels are sufficient, and archive eligibility must use explicit categories and safety exclusions.
 - Ualá marketing requires promotion precedence over generic transaction words.
 - Historical Gmail queries need explicit accent variants and length-aware chunking.
+- Treat `mercadopago.com.mx`, `mercadopago.com`, and `gbm.com.mx` as one Mercado Pago institution;
+  do not recreate a separate GBM hierarchy.
+- BBVA is intentionally absent from the configured account taxonomy.
+- Ualá live mail uses both `uala.com.mx` and `uala.mx` sender domains.
+- Afore and Infonavit are institution-level parents so their messages retain a
+  separate type child; do not add either name as a shared child category.
+- Never split Afore by the word alone: Banamex transaction bodies can contain
+  `AFORE MOVIL` as a merchant. Use verified Afore senders/exact subjects.
 
 ## Performance constraints
 
