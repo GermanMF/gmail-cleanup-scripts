@@ -52,6 +52,19 @@
 - [ ] Parent and child are both preserved.
 - [ ] Repair/backfill changes labels only.
 
+## Historical category-backfill review
+
+- [ ] `runInboxRules` source and hourly trigger behavior are unchanged.
+- [ ] Backfill token is empty unless one exact live batch is approved.
+- [ ] A manual batch pins one explicitly reviewed policy.
+- [ ] DRY_RUN neither persists/resets the cursor nor installs/removes triggers.
+- [ ] Promotions archive is false; Social and Updates are label-only.
+- [ ] Promotions/Social safety exclusions route to the historical `Protected`
+  label and never receive their category staging labels.
+- [ ] Run the read-only staging-repair audit before correcting older labels.
+- [ ] Any repair adds `Protected` before removing only the wrong review label;
+  it does not change read/archive state and never uses Trash.
+
 ## Session wrap-up
 
 - [ ] Run tests and record the final count.

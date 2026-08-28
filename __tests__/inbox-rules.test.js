@@ -24,6 +24,16 @@ const {
   financialThreadHasStatementEvidence,
   threadHasMessageInsideMinimumAge,
   buildInboxBacklogQuery,
+  buildHistoricalInboxBackfillQuery,
+  buildHistoricalInboxBackfillSafeShapeQuery,
+  getOrCreateHistoricalReviewLabel,
+  selectHistoricalInboxBackfillPolicy,
+  isHistoricalInboxBackfillSelectionAllowed,
+  shouldRemoveHistoricalInboxBackfillSchedule,
+  buildHistoricalStagingLabelRepairQuery,
+  isHistoricalConversationSubjectProtected,
+  isHistoricalSocialSubjectProtected,
+  shouldRouteHistoricalThreadToProtectedLabel,
   buildFinancialSublabelBackfillQuery,
   buildFinancialSublabelSearchQuery,
   buildFinancialSublabelSearchQueries,
@@ -84,14 +94,14 @@ describe('inbox rule queries', () => {
     }
   });
 
-  test('enables reviewed record archives without pausing established low-value rules', () => {
+  test('keeps document record archives gated without pausing established low-value rules', () => {
     const receipts = configModule.CONFIG.INBOX_RULES.find(
       (candidate) => candidate.name === 'Receipts'
     );
     const promotions = configModule.CONFIG.INBOX_RULES.find(
       (candidate) => candidate.name === 'Promotions'
     );
-    expect(isInboxRuleArchiveEnabled(receipts)).toBe(true);
+    expect(isInboxRuleArchiveEnabled(receipts)).toBe(false);
     expect(isInboxRuleArchiveEnabled(promotions)).toBe(true);
   });
 
@@ -329,6 +339,205 @@ describe('age and backlog safeguards', () => {
     expect(buildInboxBacklogQuery(policy)).toContain(
       'label:"Auto/Documents/Receipts"'
     );
+  });
+
+  test('keeps historical Promotions, Social, and Updates in a separate backfill lane', () => {
+    const policies = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES;
+    expect(policies.find((policy) => policy.name === 'Promotions').archive).toBe(true);
+    expect(policies.find((policy) => policy.name === 'Social').archive).toBe(false);
+    expect(policies.filter((policy) => policy.name.startsWith('Updates/')).length).toBeGreaterThan(6);
+    expect(CONFIG.HISTORICAL_INBOX_BACKFILL_CONFIRMATION).toBe('');
+    expect(CONFIG.HISTORICAL_INBOX_BACKFILL_ACTIVE_POLICY_NAME).toBe('');
+    expect(CONFIG.HISTORICAL_INBOX_BACKFILL_LABEL_REPAIR_CONFIRMATION).toBe('');
+    expect(CONFIG.HISTORICAL_INBOX_BACKFILL_ARCHIVE_PROMOTIONS).toBe(false);
+    expect(CONFIG.HISTORICAL_INBOX_BACKFILL_INTERVAL_MINUTES).toBe(10);
+    expect(CONFIG.HISTORICAL_INBOX_BACKFILL_BATCH_SIZE).toBeLessThanOrEqual(25);
+  });
+
+  test('makes the historical cursor idempotent with its review label', () => {
+    const promotions = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Promotions'
+    );
+    const pending = buildHistoricalInboxBackfillQuery(promotions, false);
+    const audit = buildHistoricalInboxBackfillQuery(promotions, true);
+    expect(pending).toContain('category:promotions');
+    expect(pending).toContain(`-label:"${promotions.label}"`);
+    expect(audit).not.toContain(`-label:"${promotions.label}"`);
+    const safeShape = buildHistoricalInboxBackfillSafeShapeQuery(promotions);
+    expect(safeShape).toContain('-has:attachment');
+    expect(safeShape).toContain('-is:starred');
+    expect(safeShape).toContain('-is:important');
+    expect(pending).toContain(
+      `-label:"${CONFIG.HISTORICAL_INBOX_BACKFILL_PROTECTED_LABEL}"`
+    );
+  });
+
+  test('creates the historical review parents before the leaf label', () => {
+    const originalGetOrCreateLabel = global.getOrCreateLabel;
+    const calls = [];
+    global.getOrCreateLabel = (name) => {
+      calls.push(name);
+      return { getName: () => name };
+    };
+    try {
+      expect(getOrCreateHistoricalReviewLabel('Cleanup_Review/Historical/Promotions').getName())
+        .toBe('Cleanup_Review/Historical/Promotions');
+      expect(calls).toEqual([
+        'Cleanup_Review',
+        'Cleanup_Review/Historical',
+        'Cleanup_Review/Historical/Promotions',
+      ]);
+    } finally {
+      global.getOrCreateLabel = originalGetOrCreateLabel;
+    }
+  });
+
+  test('pins a manual historical batch to its explicitly approved policy', () => {
+    const policies = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES;
+    const selection = selectHistoricalInboxBackfillPolicy(
+      policies,
+      { policyIndex: 1 },
+      'Promotions'
+    );
+    expect(selection.policy.name).toBe('Promotions');
+    expect(selection.policyIndex).toBe(0);
+    expect(selection.pinned).toBe(true);
+  });
+
+  test('rejects an unknown manually selected historical policy', () => {
+    const selection = selectHistoricalInboxBackfillPolicy(
+      CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES,
+      { policyIndex: 0 },
+      'Not an approved policy'
+    );
+    expect(selection.policy).toBeNull();
+    expect(selection.pinned).toBe(true);
+  });
+
+  test('requires a pin for manual batches and permits an unpinned scheduler cursor', () => {
+    const policies = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES;
+    const unpinned = selectHistoricalInboxBackfillPolicy(
+      policies,
+      { policyIndex: 1 },
+      ''
+    );
+    const pinned = selectHistoricalInboxBackfillPolicy(
+      policies,
+      { policyIndex: 1 },
+      'Promotions'
+    );
+    expect(isHistoricalInboxBackfillSelectionAllowed(unpinned, false)).toBe(false);
+    expect(isHistoricalInboxBackfillSelectionAllowed(unpinned, true)).toBe(true);
+    expect(isHistoricalInboxBackfillSelectionAllowed(pinned, false)).toBe(true);
+  });
+
+  test('never auto-removes the historical trigger during DRY_RUN', () => {
+    const complete = { skipped: false, empty: true, errors: 0 };
+    expect(shouldRemoveHistoricalInboxBackfillSchedule(complete, true)).toBe(false);
+    expect(shouldRemoveHistoricalInboxBackfillSchedule(complete, false)).toBe(true);
+    expect(shouldRemoveHistoricalInboxBackfillSchedule({ ...complete, errors: 1 }, false))
+      .toBe(false);
+  });
+
+  test('leaves categorized Updates out of the Unclassified fallback', () => {
+    const unclassified = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Updates/Unclassified'
+    );
+    const security = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Updates/Security'
+    );
+    expect(buildHistoricalInboxBackfillQuery(unclassified, false)).toContain(
+      `-label:"${security.label}"`
+    );
+  });
+
+  test('protects personal, recruiter, connection, and reply-shaped Social subjects', () => {
+    expect(isHistoricalSocialSubjectProtected([
+      { getSubject: () => 'New connection request from a recruiter' },
+    ])).toBe(true);
+    expect(isHistoricalSocialSubjectProtected([
+      { getSubject: () => 'I’m still waiting for your response' },
+    ])).toBe(true);
+    expect(isHistoricalSocialSubjectProtected([
+      { getSubject: () => 'Weekly community digest' },
+    ])).toBe(false);
+  });
+
+  test('protects recruiter, invitation, connection, and reply signals in Promotions too', () => {
+    const promotions = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Promotions'
+    );
+    const social = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Social'
+    );
+    const updates = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Updates/Digests'
+    );
+    const exclusion = 'personal_recruiter_invitation_or_reply_signal';
+    expect(promotions.protectConversationSignals).toBe(true);
+    expect(social.protectConversationSignals).toBe(true);
+    expect(isHistoricalConversationSubjectProtected([
+      { getSubject: () => 'Invitation: connect with your recruiter' },
+    ])).toBe(true);
+    expect(shouldRouteHistoricalThreadToProtectedLabel(promotions, exclusion)).toBe(true);
+    expect(shouldRouteHistoricalThreadToProtectedLabel(social, exclusion)).toBe(true);
+    expect(shouldRouteHistoricalThreadToProtectedLabel(updates, exclusion)).toBe(false);
+    expect(shouldRouteHistoricalThreadToProtectedLabel(promotions, 'real_attachment')).toBe(true);
+  });
+
+  test('detects a recruiter signal in the sender as well as the subject', () => {
+    expect(isHistoricalConversationSubjectProtected([{
+      getSubject: () => 'A quick note for you',
+      getFrom: () => 'Senior Recruiter <person@example.test>',
+    }])).toBe(true);
+    expect(isHistoricalConversationSubjectProtected([{
+      getSubject: () => 'A quick note for you',
+      getFrom: () => 'Recruitment Team <no-reply@example.test>',
+    }])).toBe(true);
+  });
+
+  test('does not treat an ordinary no-reply sender as a response signal', () => {
+    expect(isHistoricalConversationSubjectProtected([{
+      getSubject: () => 'Weekly community digest',
+      getFrom: () => 'Newsletter <no-reply@example.test>',
+    }])).toBe(false);
+  });
+
+  test.each([
+    ['Alex invited you to join their network'],
+    ['A recruiter wants to connect'],
+    ['You have a new connection'],
+    ['Taylor replied to your message'],
+    ['Morgan sent you a message'],
+    ['Tienes un nuevo mensaje'],
+    ['Te invitaron a conectar'],
+    ['El reclutador respondió'],
+  ])('protects common historical conversation variant: %s', (subject) => {
+    expect(isHistoricalConversationSubjectProtected([{
+      getSubject: () => subject,
+      getFrom: () => 'Notifications <no-reply@example.test>',
+    }])).toBe(true);
+  });
+
+  test('builds a label-only repair query for staged conversation signals', () => {
+    const social = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Social'
+    );
+    expect(buildHistoricalStagingLabelRepairQuery(social)).toBe(
+      `label:"${social.label}" -in:spam -in:trash`
+    );
+  });
+
+  test('keeps dynamic Uber matching inside the historical lane and sender scoped', () => {
+    const uber = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.find(
+      (policy) => policy.name === 'Updates/Uber records'
+    );
+    const generic = CONFIG.INBOX_RULES.find((rule) => rule.name === 'Orders/Records');
+    expect(uber.query).toContain('from:uber.com');
+    expect(uber.query).toContain('subject:"your uber receipt"');
+    expect(uber.query).toContain('subject:"your uber trip"');
+    expect(CONFIG.INBOX_RULES.some((rule) => rule.name === 'Orders/Uber Records')).toBe(false);
+    expect(generic.query).not.toContain('subject:"your uber trip"');
   });
 
   test('financial history query excludes child labels already applied', () => {

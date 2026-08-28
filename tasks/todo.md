@@ -1,6 +1,6 @@
 # Active Backlog — Gmail Cleanup Scripts
 
-Last reviewed: **2026-08-27**
+Last reviewed: **2026-08-28**
 
 This is the authoritative next-work list. Historical accomplishments belong in `tasks/lessons.md` and the Git history.
 
@@ -12,9 +12,21 @@ Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`.
 
 ## Medium priority — inbox rollout decisions
 
+- [x] Configure and run live read-only `auditHistoricalInboxBackfill`; record
+  account counts and samples only in ignored `docs/HANDOVER.local.md`.
+- [x] Review staged Promotions and Social samples. Both contained conversation-
+  shaped mail, so Promotions archive remains disabled and both stay label-only.
+- [x] Add local protection that routes all Promotions/Social safety exclusions
+  to the neutral historical `Protected` label instead of category staging.
+- [x] Deploy the token-empty protection and run the read-only
+  `auditHistoricalStagingLabelRepair` before any further historical batch.
+- [x] Review that audit and complete one approved label-only repair that
+  rehomes only affected staged threads; no archive or Trash.
 - [x] Review accumulated receipt/order samples before considering `ENABLE_DOCUMENT_RECORD_ARCHIVE`.
 - [x] Run `auditInboxRuleRetention` and review every affected low-value label before considering `ENABLE_RULE_RETENTION_TRASH`.
 - [x] Re-audit hourly `runInboxRules` duration after finance maintenance completes; normal runs should stay below the lock-contention window.
+- [ ] Diagnose the remaining seven-day `runInboxRules` error-rate history
+  read-only before changing the stable hourly trigger.
 - [ ] Add any newly observed bank-specific vocabulary only with real examples and regression tests.
 
 ## Low priority / deferred
@@ -25,8 +37,8 @@ Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`.
 
 ## Recently completed
 
-- [x] Enable delayed receipt/order archive after reviewed sampling, a bounded
-  reversible rollout, and verification that attachment protections held.
+- [x] Complete a bounded receipt/order archive rollout and verify attachment
+  protections; keep the rollout gate disabled outside an approved run.
 - [x] Add dedicated Afore and Infonavit finance parents, rehome all 54 verified
   threads with exactly one child, remove stale Banamex assignments, and clear
   the temporary token without changing read/archive state.

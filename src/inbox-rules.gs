@@ -1322,6 +1322,508 @@ function buildInboxBacklogQuery(policy) {
   return queryParts.join(' ');
 }
 
+// =============================================================================
+// HISTORICAL CATEGORY BACKFILL
+// This lane never changes the hourly runInboxRules selection window. It labels
+// historical candidates first; only reviewed Promotions may later archive.
+// =============================================================================
+
+/** Builds the pending historical query. Labels make each batch idempotent. */
+function buildHistoricalInboxBackfillQuery(policy, includeCompleted) {
+  const queryParts = [policy.query, '-in:spam', '-in:trash'];
+  const policies = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES || [];
+
+  if (policy.fallback) {
+    policies.filter(function (candidate) { return !candidate.fallback; }).forEach(function (candidate) {
+      queryParts.push(`-label:"${candidate.label}"`);
+    });
+  }
+  if (policy.protectConversationSignals) {
+    queryParts.push(
+      `-label:"${CONFIG.HISTORICAL_INBOX_BACKFILL_PROTECTED_LABEL}"`
+    );
+  }
+  if (!includeCompleted) queryParts.push(`-label:"${policy.label}"`);
+  return queryParts.join(' ');
+}
+
+/** Indexed approximation used to quantify attachment/star/importance exclusions. */
+function buildHistoricalInboxBackfillSafeShapeQuery(policy) {
+  return [
+    buildHistoricalInboxBackfillQuery(policy, false),
+    '-has:attachment',
+    '-is:starred',
+    '-is:important',
+  ].join(' ');
+}
+
+/**
+ * Ensures Gmail renders a historical review label as a hierarchy. Creating
+ * parents first also repairs a previously created slash-delimited leaf label.
+ */
+function getOrCreateHistoricalReviewLabel(labelName) {
+  const segments = String(labelName || '').split('/').filter(Boolean);
+  let path = '';
+  let label = null;
+  segments.forEach(function (segment) {
+    path = path ? `${path}/${segment}` : segment;
+    label = getOrCreateLabel(path);
+  });
+  return label;
+}
+
+/** True when a subject or sender signals a person, recruiter, invitation, or reply. */
+function isHistoricalConversationSubjectProtected(messages) {
+  const subjectPhrases = CONFIG.HISTORICAL_SOCIAL_PROTECTED_SUBJECT_PHRASES || [];
+  const senderPhrases = CONFIG.HISTORICAL_CONVERSATION_PROTECTED_SENDER_PHRASES || [];
+  return (messages || []).some(function (message) {
+    const subject = message && typeof message.getSubject === 'function'
+      ? message.getSubject()
+      : '';
+    const from = message && typeof message.getFrom === 'function'
+      ? message.getFrom()
+      : '';
+    const normalizedSubject = normalizeForMatching(subject);
+    const normalizedFrom = normalizeForMatching(from);
+    return subjectPhrases.some(function (phrase) {
+      return normalizedSubject.indexOf(normalizeForMatching(phrase)) !== -1;
+    }) || senderPhrases.some(function (phrase) {
+      return normalizedFrom.indexOf(normalizeForMatching(phrase)) !== -1;
+    });
+  });
+}
+
+/** Backward-compatible name retained for existing tests and operational notes. */
+function isHistoricalSocialSubjectProtected(messages) {
+  return isHistoricalConversationSubjectProtected(messages);
+}
+
+function shouldRouteHistoricalThreadToProtectedLabel(policy, exclusion) {
+  return !!(policy && policy.protectConversationSignals && exclusion);
+}
+
+/** Returns the first safety reason that blocks archival, or an empty string. */
+function getHistoricalInboxBackfillExclusion(thread, messages, policy) {
+  if (threadHasRealAttachments(messages)) return 'real_attachment';
+  if (isThreadProtected(thread, messages)) return 'starred_important_or_sent_thread';
+  if (threadHasAutomationProtectedSender(messages)) return 'protected_sender';
+  if (threadHasAutomationProtectedContent(messages)) return 'protected_content';
+  if (
+    policy.protectConversationSignals &&
+    isHistoricalConversationSubjectProtected(messages)
+  ) {
+    return 'personal_recruiter_invitation_or_reply_signal';
+  }
+  return '';
+}
+
+/**
+ * Logs category counts and representative samples without changing Gmail.
+ * Candidate counts are capped; sample exclusions use the same runtime checks
+ * that the batch uses before deciding whether Promotions may be archived.
+ */
+function auditHistoricalInboxBackfill() {
+  Logger.log('=== HISTORICAL INBOX BACKFILL AUDIT (READ-ONLY) ===');
+  const sampleSize = CONFIG.HISTORICAL_INBOX_BACKFILL_AUDIT_SAMPLE_SIZE;
+  CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES.forEach(function (policy) {
+    const totalQuery = buildHistoricalInboxBackfillQuery(policy, true);
+    const pendingQuery = buildHistoricalInboxBackfillQuery(policy, false);
+    const safeShapeQuery = buildHistoricalInboxBackfillSafeShapeQuery(policy);
+    const total = countThreads(totalQuery, CONFIG.MAX_COUNT_PER_QUERY);
+    const pending = countThreads(pendingQuery, CONFIG.MAX_COUNT_PER_QUERY);
+    const safeShape = countThreads(safeShapeQuery, CONFIG.MAX_COUNT_PER_QUERY);
+    const cap = CONFIG.MAX_COUNT_PER_QUERY;
+    Logger.log(`${policy.name}: total=${total}${total >= cap ? '+' : ''}, ` +
+      `pending=${pending}${pending >= cap ? '+' : ''}, ` +
+      `safe-shape=${safeShape}${safeShape >= cap ? '+' : ''}; archive=${
+        policy.archive && CONFIG.HISTORICAL_INBOX_BACKFILL_ARCHIVE_PROMOTIONS
+      }`);
+    Logger.log(`  ${pendingQuery}`);
+
+    const samples = GmailApp.search(pendingQuery, 0, sampleSize);
+    samples.forEach(function (thread) {
+      const messages = thread.getMessages();
+      const exclusion = getHistoricalInboxBackfillExclusion(thread, messages, policy);
+      const protectedThread = shouldRouteHistoricalThreadToProtectedLabel(policy, exclusion);
+      Logger.log(
+        `  [SAMPLE ${protectedThread ? `PROTECTED:${exclusion}` :
+          (exclusion ? `EXCLUDE:${exclusion}` : 'archive-eligible')}] ` +
+        `${thread.getFirstMessageSubject()}`
+      );
+    });
+  });
+  Logger.log('No labels, read state, archive state, triggers, or messages were changed.');
+}
+
+function getHistoricalInboxBackfillState() {
+  const propertyName = CONFIG.HISTORICAL_INBOX_BACKFILL_STATE_PROPERTY;
+  const raw = PropertiesService.getScriptProperties().getProperty(propertyName);
+  try {
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      policyIndex: Math.max(0, Number(parsed.policyIndex) || 0),
+      emptyPolicies: Math.max(0, Number(parsed.emptyPolicies) || 0),
+      hadErrors: !!parsed.hadErrors,
+    };
+  } catch (error) {
+    Logger.log(`Historical backfill state was invalid and will be reset: ${error}`);
+    return { policyIndex: 0, emptyPolicies: 0, hadErrors: false };
+  }
+}
+
+/** Resolves either the durable cursor policy or an explicitly pinned manual policy. */
+function selectHistoricalInboxBackfillPolicy(policies, state, activePolicyName) {
+  const requestedName = String(activePolicyName || '').trim();
+  if (!requestedName) {
+    const policyIndex = state.policyIndex % policies.length;
+    return { policy: policies[policyIndex], policyIndex, pinned: false };
+  }
+  const policyIndex = policies.findIndex(function (policy) {
+    return policy.name === requestedName;
+  });
+  return {
+    policy: policyIndex >= 0 ? policies[policyIndex] : null,
+    policyIndex,
+    pinned: true,
+  };
+}
+
+function isHistoricalInboxBackfillSelectionAllowed(selection, allowUnpinned) {
+  return !!(selection && selection.policy && (selection.pinned || allowUnpinned));
+}
+
+function saveHistoricalInboxBackfillState(state) {
+  PropertiesService.getScriptProperties().setProperty(
+    CONFIG.HISTORICAL_INBOX_BACKFILL_STATE_PROPERTY,
+    JSON.stringify(state)
+  );
+}
+
+/** Clears only the historical category-backfill cursor; it does not alter Gmail. */
+function resetHistoricalInboxBackfillState() {
+  if (CONFIG.DRY_RUN) {
+    Logger.log('[DRY RUN] Historical inbox backfill state was not cleared.');
+    return;
+  }
+  PropertiesService.getScriptProperties().deleteProperty(
+    CONFIG.HISTORICAL_INBOX_BACKFILL_STATE_PROPERTY
+  );
+  Logger.log('Historical inbox backfill state was cleared. No Gmail messages changed.');
+}
+
+/**
+ * Runs one locked, bounded historical category batch. Every selected thread is
+ * first given a review label, which acts as the durable cursor. Promotions may
+ * archive only after both an explicit token and the reviewed archive flag.
+ */
+function backfillHistoricalInbox(options) {
+  if (
+    !CONFIG.DRY_RUN &&
+    CONFIG.HISTORICAL_INBOX_BACKFILL_CONFIRMATION !== 'APPLY_HISTORICAL_INBOX_BACKFILL'
+  ) {
+    Logger.log('Historical inbox backfill confirmation token missing. Nothing changed.');
+    return { skipped: true, labelled: 0, archived: 0, errors: 0, empty: false };
+  }
+
+  const policies = CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES || [];
+  if (!policies.length) {
+    Logger.log('No historical inbox backfill policies are configured.');
+    return { skipped: true, labelled: 0, archived: 0, errors: 0, empty: true };
+  }
+
+  const executionLock = LockService.getScriptLock();
+  if (!executionLock.tryLock(5000)) {
+    Logger.log('Historical inbox backfill skipped — another mailbox execution is running.');
+    return { skipped: true, labelled: 0, archived: 0, errors: 0, empty: false };
+  }
+
+  try {
+    const state = getHistoricalInboxBackfillState();
+    const selection = selectHistoricalInboxBackfillPolicy(
+      policies,
+      state,
+      CONFIG.HISTORICAL_INBOX_BACKFILL_ACTIVE_POLICY_NAME
+    );
+    const allowUnpinned = !!(options && options.allowUnpinned === true);
+    if (!isHistoricalInboxBackfillSelectionAllowed(selection, allowUnpinned)) {
+      Logger.log(
+        selection.policy
+          ? 'Manual historical inbox backfill requires an explicit active policy. Nothing changed.'
+          : 'Historical inbox backfill active policy is invalid. Nothing changed.'
+      );
+      return { skipped: true, labelled: 0, archived: 0, errors: 0, empty: false };
+    }
+    const policyIndex = selection.policyIndex;
+    const policy = selection.policy;
+    const query = buildHistoricalInboxBackfillQuery(policy, false);
+    const threads = GmailApp.search(query, 0, CONFIG.HISTORICAL_INBOX_BACKFILL_BATCH_SIZE);
+    let labelled = 0;
+    let archived = 0;
+    let errors = 0;
+    const startTime = Date.now();
+    let stageLabel = null;
+    let protectedLabel = null;
+    let protectedThreads = 0;
+
+    threads.forEach(function (thread) {
+      if (Date.now() - startTime > 4.5 * 60 * 1000) return;
+      try {
+        const messages = thread.getMessages();
+        const exclusion = getHistoricalInboxBackfillExclusion(thread, messages, policy);
+        const protectedThread = shouldRouteHistoricalThreadToProtectedLabel(policy, exclusion);
+        if (CONFIG.DRY_RUN) {
+          if (protectedThread) {
+            Logger.log(`[DRY RUN] Would route ${policy.name} to the protected label; ` +
+              `reason=${exclusion}: ` +
+              thread.getFirstMessageSubject());
+            protectedThreads++;
+          } else {
+            Logger.log(`[DRY RUN] Would label ${policy.name}; exclusion=${exclusion || 'none'}: ` +
+              thread.getFirstMessageSubject());
+            labelled++;
+          }
+        } else {
+          if (protectedThread) {
+            protectedLabel = protectedLabel ||
+              getOrCreateHistoricalReviewLabel(
+                CONFIG.HISTORICAL_INBOX_BACKFILL_PROTECTED_LABEL
+              );
+            thread.addLabel(protectedLabel);
+            protectedThreads++;
+          } else {
+            stageLabel = stageLabel || getOrCreateHistoricalReviewLabel(policy.label);
+            thread.addLabel(stageLabel);
+            if (
+              policy.archive &&
+              CONFIG.HISTORICAL_INBOX_BACKFILL_ARCHIVE_PROMOTIONS &&
+              !exclusion
+            ) {
+              thread.moveToArchive();
+              archived++;
+            }
+            labelled++;
+          }
+        }
+      } catch (error) {
+        errors++;
+        Logger.log(`Historical backfill error for ${policy.name}/${thread.getId()}: ${error}`);
+      }
+    });
+
+    const wasEmpty = threads.length === 0;
+    const nextState = {
+      policyIndex: selection.pinned ? policyIndex : (policyIndex + 1) % policies.length,
+      emptyPolicies: selection.pinned ? 0 : (wasEmpty ? state.emptyPolicies + 1 : 0),
+      hadErrors: selection.pinned ? errors > 0 : (state.hadErrors || errors > 0),
+    };
+    const cleanEmptyScan = !selection.pinned && wasEmpty && nextState.emptyPolicies >= policies.length;
+    const empty = cleanEmptyScan && !nextState.hadErrors;
+    if (cleanEmptyScan && nextState.hadErrors) {
+      // Require one further all-empty cycle after an error before a temporary
+      // trigger may remove itself.
+      nextState.emptyPolicies = 0;
+      nextState.hadErrors = false;
+    }
+    if (!CONFIG.DRY_RUN) saveHistoricalInboxBackfillState(nextState);
+    Logger.log(
+      `Historical inbox backfill ${policy.name} — staged=${labelled}, ` +
+      `protected=${protectedThreads}, archived=${archived}, ` +
+      `errors=${errors}, emptyCycle=${empty}. Nothing was trashed.`
+    );
+    return {
+      skipped: false,
+      labelled,
+      protectedThreads,
+      archived,
+      errors,
+      empty,
+    };
+  } finally {
+    executionLock.releaseLock();
+  }
+}
+
+/** Builds the exact source-label query used by the read-only staging repair audit. */
+function buildHistoricalStagingLabelRepairQuery(policy) {
+  return `label:"${policy.label}" -in:spam -in:trash`;
+}
+
+function getHistoricalProtectedPolicies() {
+  return (CONFIG.HISTORICAL_INBOX_BACKFILL_POLICIES || []).filter(function (policy) {
+    return policy.protectConversationSignals;
+  });
+}
+
+/**
+ * Audits historical threads that now fail any Promotions/Social safety gate.
+ * The matching predicate is identical to the future backfill and changes no mail.
+ */
+function auditHistoricalStagingLabelRepair() {
+  Logger.log('=== HISTORICAL STAGING LABEL REPAIR AUDIT (READ-ONLY) ===');
+  const batchSize = CONFIG.HISTORICAL_INBOX_BACKFILL_LABEL_REPAIR_BATCH_SIZE;
+  getHistoricalProtectedPolicies().forEach(function (policy) {
+    const query = buildHistoricalStagingLabelRepairQuery(policy);
+    const total = countThreads(query, CONFIG.MAX_COUNT_PER_QUERY);
+    const threads = GmailApp.search(query, 0, batchSize);
+    let matching = 0;
+    let errors = 0;
+    threads.forEach(function (thread) {
+      try {
+        const messages = thread.getMessages();
+        if (getHistoricalInboxBackfillExclusion(thread, messages, policy)) matching++;
+      } catch (error) {
+        errors++;
+        Logger.log(`Historical staging repair audit error for ${policy.name}: ${error}`);
+      }
+    });
+    Logger.log(
+      `${policy.name}: staged=${total}${total >= CONFIG.MAX_COUNT_PER_QUERY ? '+' : ''}, ` +
+      `inspected=${threads.length}, matching=${matching}, errors=${errors}`
+    );
+    Logger.log(`  ${query}`);
+  });
+  Logger.log('No labels, read state, archive state, triggers, or messages were changed.');
+}
+
+/**
+ * Rehomes only threads that fail the current Promotions/Social safety gates
+ * from their staging labels to a neutral protected label. Mail state is untouched.
+ */
+function repairHistoricalStagingLabels() {
+  if (
+    !CONFIG.DRY_RUN &&
+    CONFIG.HISTORICAL_INBOX_BACKFILL_LABEL_REPAIR_CONFIRMATION !==
+      'REPAIR_HISTORICAL_STAGING_LABELS'
+  ) {
+    Logger.log('Historical staging label repair token missing. Nothing changed.');
+    return { skipped: true, reclassified: 0, errors: 0 };
+  }
+
+  const executionLock = LockService.getScriptLock();
+  if (!executionLock.tryLock(5000)) {
+    Logger.log('Historical staging label repair skipped — another mailbox execution is running.');
+    return { skipped: true, reclassified: 0, errors: 0 };
+  }
+
+  try {
+    let reclassified = 0;
+    let errors = 0;
+    let protectedLabel = null;
+    const batchSize = CONFIG.HISTORICAL_INBOX_BACKFILL_LABEL_REPAIR_BATCH_SIZE;
+    getHistoricalProtectedPolicies().forEach(function (policy) {
+      const sourceLabel = GmailApp.getUserLabelByName(policy.label);
+      if (!sourceLabel) return;
+      const threads = GmailApp.search(
+        buildHistoricalStagingLabelRepairQuery(policy),
+        0,
+        batchSize
+      );
+      threads.forEach(function (thread) {
+        try {
+          const messages = thread.getMessages();
+          const exclusion = getHistoricalInboxBackfillExclusion(thread, messages, policy);
+          if (!exclusion) return;
+          if (CONFIG.DRY_RUN) {
+            Logger.log(`[DRY RUN] Would rehome protected thread from ${policy.name}; ` +
+              `reason=${exclusion}: ` +
+              thread.getFirstMessageSubject());
+          } else {
+            protectedLabel = protectedLabel || getOrCreateHistoricalReviewLabel(
+              CONFIG.HISTORICAL_INBOX_BACKFILL_PROTECTED_LABEL
+            );
+            thread.addLabel(protectedLabel);
+            sourceLabel.removeFromThreads([thread]);
+          }
+          reclassified++;
+        } catch (error) {
+          errors++;
+          Logger.log(`Historical staging label repair error for ${policy.name}: ${error}`);
+        }
+      });
+    });
+    Logger.log(
+      `Historical staging label repair complete — reclassified=${reclassified}, ` +
+      `errors=${errors}. Read/archive state unchanged; nothing was trashed.`
+    );
+    return { skipped: false, reclassified, errors };
+  } finally {
+    executionLock.releaseLock();
+  }
+}
+
+function shouldRemoveHistoricalInboxBackfillSchedule(result, dryRun) {
+  return !!(
+    !dryRun &&
+    result &&
+    !result.skipped &&
+    result.empty &&
+    result.errors === 0
+  );
+}
+
+/** Runs the temporary worker and removes only its own trigger after a clean empty cycle. */
+function runScheduledHistoricalInboxBackfill() {
+  if (String(CONFIG.HISTORICAL_INBOX_BACKFILL_ACTIVE_POLICY_NAME || '').trim()) {
+    Logger.log('Scheduled historical backfill requires an empty active-policy pin. Nothing changed.');
+    return;
+  }
+  const result = backfillHistoricalInbox({ allowUnpinned: true });
+  if (shouldRemoveHistoricalInboxBackfillSchedule(result, CONFIG.DRY_RUN)) {
+    removeHistoricalInboxBackfillSchedule();
+    Logger.log('Historical inbox backfill is complete; temporary trigger removed.');
+  }
+}
+
+/** Installs the independent ten-minute historical-backfill worker. */
+function installHistoricalInboxBackfillSchedule() {
+  if (CONFIG.DRY_RUN) {
+    Logger.log('[DRY RUN] Historical inbox backfill trigger was not created.');
+    return;
+  }
+  if (CONFIG.HISTORICAL_INBOX_BACKFILL_CONFIRMATION !== 'APPLY_HISTORICAL_INBOX_BACKFILL') {
+    Logger.log('Historical inbox backfill confirmation token missing. Trigger was not created.');
+    return;
+  }
+  if (String(CONFIG.HISTORICAL_INBOX_BACKFILL_ACTIVE_POLICY_NAME || '').trim()) {
+    Logger.log('Clear the manual active-policy pin before installing the historical trigger.');
+    return;
+  }
+  const handler = 'runScheduledHistoricalInboxBackfill';
+  const installed = ScriptApp.getProjectTriggers().some(function (trigger) {
+    return trigger.getHandlerFunction() === handler;
+  });
+  if (installed) {
+    Logger.log('Historical inbox backfill trigger is already installed.');
+    return;
+  }
+  ScriptApp.newTrigger(handler)
+    .timeBased()
+    .everyMinutes(CONFIG.HISTORICAL_INBOX_BACKFILL_INTERVAL_MINUTES)
+    .create();
+  Logger.log(
+    `Installed historical inbox backfill trigger every ` +
+    `${CONFIG.HISTORICAL_INBOX_BACKFILL_INTERVAL_MINUTES} minute(s).`
+  );
+}
+
+/** Removes only the temporary historical-backfill trigger. */
+function removeHistoricalInboxBackfillSchedule() {
+  if (CONFIG.DRY_RUN) {
+    Logger.log('[DRY RUN] Historical inbox backfill trigger was not removed.');
+    return 0;
+  }
+  const handler = 'runScheduledHistoricalInboxBackfill';
+  let removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === handler) {
+      ScriptApp.deleteTrigger(trigger);
+      removed++;
+    }
+  });
+  Logger.log(`Removed ${removed} historical inbox backfill trigger(s).`);
+  return removed;
+}
+
 /** Read-only counts for mail old enough to expire under each retention policy. */
 function auditInboxRuleRetention() {
   Logger.log('=== INBOX RULE RETENTION AUDIT (READ-ONLY) ===');
@@ -1473,6 +1975,16 @@ if (typeof module !== 'undefined') {
     filterFinancialThreadsForSubcategory,
     threadHasMessageInsideMinimumAge,
     buildInboxBacklogQuery,
+    buildHistoricalInboxBackfillQuery,
+    buildHistoricalInboxBackfillSafeShapeQuery,
+    getOrCreateHistoricalReviewLabel,
+    selectHistoricalInboxBackfillPolicy,
+    isHistoricalInboxBackfillSelectionAllowed,
+    shouldRemoveHistoricalInboxBackfillSchedule,
+    buildHistoricalStagingLabelRepairQuery,
+    isHistoricalConversationSubjectProtected,
+    isHistoricalSocialSubjectProtected,
+    shouldRouteHistoricalThreadToProtectedLabel,
     buildFinancialSublabelBackfillQuery,
     buildFinancialSublabelSearchQuery,
     buildFinancialSublabelSearchQueries,

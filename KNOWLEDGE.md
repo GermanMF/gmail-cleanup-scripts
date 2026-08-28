@@ -24,9 +24,15 @@ This file records stable decisions and non-obvious invariants. Use `docs/HANDOVE
 - Institution classifiers are non-terminal so a bank promotion can receive both a bank label and a low-value label.
 - Real attachments, protected domains/content, starred/important state, and sent-thread participation can block low-value archive/Trash behavior.
 - `runInboxRules` and finance maintenance share a script lock.
-- `ENABLE_DOCUMENT_RECORD_ARCHIVE` was enabled only after reviewed receipt/order
-  sampling and a bounded reversible rollout. `ENABLE_RULE_RETENTION_TRASH`
-  remains a separate disabled rollout gate, not an ordinary tuning switch.
+- Historical category backfill is separate from `runInboxRules`: review labels
+  form its durable cursor, Social and Updates remain label-only, and Promotions
+  may archive only after a reviewed audit and two explicit rollout gates.
+- Promotions/Social candidates that fail any runtime safety check go to the
+  neutral historical `Protected` label, never to either category staging label.
+  Repair rehomes labels only and must preserve Inbox/read/archive state.
+- `ENABLE_DOCUMENT_RECORD_ARCHIVE` and `ENABLE_RULE_RETENTION_TRASH` are
+  independent rollout gates, not ordinary tuning switches. Keep both disabled
+  unless the corresponding reviewed workflow is intentionally active.
 - Do not recreate a catch-all `Routine Updates` label from Gmail's `category:updates`; explicit security, action, document, finance, digest, and promotion rules must own those messages.
 
 ## Finance model

@@ -70,7 +70,7 @@ const CONFIG = {
   REPORT_EMAIL:         '',                          // recipient (defaults to active user)
   ENABLE_DASHBOARD:     false,                       // append stats to Google Sheets
   DASHBOARD_SPREADSHEET_ID: '',                      // sheet ID (auto-created if empty)
-  ENABLE_DOCUMENT_RECORD_ARCHIVE: true,              // reviewed receipt/order archive rollout
+  ENABLE_DOCUMENT_RECORD_ARCHIVE: false,             // gate receipt/order archive rollout
 };
 ```
 
@@ -273,12 +273,28 @@ For historical Inbox cleanup, run `auditInboxBacklog()`. To apply one reversible
 batch, set `INBOX_BACKLOG_CONFIRMATION` to `ARCHIVE_INBOX_BACKLOG` and run
 `stageInboxBacklog()`. Clear the token again afterward.
 
+For category mail older than the normal inbox-rule window, use the separate
+`auditHistoricalInboxBackfill()` first. It reports Promotions, Social, and
+specific Updates groups with sample exclusions. `backfillHistoricalInbox()` is
+confirmation-gated, uses small resumable review-label batches, and is label-only
+by default. Social and Updates never auto-archive in this lane. Promotions can
+be archived only after its audit is reviewed and its separate archive gate is
+deliberately enabled. Promotions/Social candidates with attachments, protected
+senders/content, starred/important/sent-thread state, or recruiter, connection,
+invitation, or response signals are routed to
+`Cleanup_Review/Historical/Protected`, never to category staging. A separate
+read-only repair audit can identify older staged labels that need the same
+label-only rehome. The optional ten-minute temporary worker removes only its
+own trigger after a full empty, error-free cycle; see
+[docs/OPERATIONS.md](docs/OPERATIONS.md) for stopping and reversal.
+
 Default incoming behavior:
 
 - Security and genuinely action-required finance/Updates mail stay in Inbox.
-- With `ENABLE_DOCUMENT_RECORD_ARCHIVE: true`, receipts and completed orders are
-  marked read and archived after 14 days only when they
-  have no real attachment and pass runtime safety checks.
+- Receipts and completed orders remain label-only while
+  `ENABLE_DOCUMENT_RECORD_ARCHIVE` is false. When separately enabled, eligible
+  records are marked read and archived after 14 days only when they have no
+  real attachment and pass runtime safety checks.
 - Real attachments stay in Inbox and receive document/financial labels.
 - Safe Promotions and Social mail are labeled, marked read, and archived.
 - There is no catch-all routine Updates archive lane; explicit reviewed rules own
