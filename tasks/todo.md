@@ -1,6 +1,6 @@
 # Active Backlog — Gmail Cleanup Scripts
 
-Last reviewed: **2026-08-24**
+Last reviewed: **2026-08-28**
 
 This is the authoritative next-work list. Historical accomplishments belong in `tasks/lessons.md` and the Git history.
 
@@ -16,6 +16,16 @@ Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`. A
 
 ## Medium priority — inbox rollout decisions
 
+- [x] Configure and run live read-only `auditHistoricalInboxBackfill`; record
+  account counts and samples only in ignored `docs/HANDOVER.local.md`.
+- [x] Review staged Promotions and Social samples. Both contained conversation-
+  shaped mail, so Promotions archive remains disabled and both stay label-only.
+- [x] Add local protection that routes all Promotions/Social safety exclusions
+  to the neutral historical `Protected` label instead of category staging.
+- [x] Deploy the token-empty protection and run the read-only
+  `auditHistoricalStagingLabelRepair` before any further historical batch.
+- [x] Review that audit and complete one approved label-only repair that
+  rehomes only affected staged threads; no archive or Trash.
 - [ ] Review accumulated `Auto/Finance/Records` and `Auto/LowValue/Routine Updates` samples before changing `ENABLE_INBOX_RECORD_ARCHIVE`.
 - [ ] Run `auditInboxRuleRetention` and review every affected low-value label before considering `ENABLE_RULE_RETENTION_TRASH`.
 - [ ] Re-audit hourly `runInboxRules` duration after finance maintenance completes; normal runs should stay below the lock-contention window.

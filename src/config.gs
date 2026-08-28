@@ -938,6 +938,114 @@ const CONFIG = {
       allowProtectedContentArchive: true,
     },
   ],
+  /**
+   * Historical category backfill is deliberately independent from the hourly
+   * runInboxRules window. It starts as a confirmation-gated, reversible
+   * label-only workflow. Promotions is the sole archive-capable policy and
+   * remains disabled until its live audit has been reviewed.
+   */
+  HISTORICAL_INBOX_BACKFILL_BATCH_SIZE: 25,
+  HISTORICAL_INBOX_BACKFILL_INTERVAL_MINUTES: 10,
+  HISTORICAL_INBOX_BACKFILL_AUDIT_SAMPLE_SIZE: 3,
+  HISTORICAL_INBOX_BACKFILL_CONFIRMATION: '', // required: APPLY_HISTORICAL_INBOX_BACKFILL
+  HISTORICAL_INBOX_BACKFILL_ARCHIVE_PROMOTIONS: false,
+  // Leave blank for the resumable all-policy scheduler. A manual approved
+  // batch must name one policy, preventing the durable cursor from advancing
+  // into a different category unexpectedly.
+  HISTORICAL_INBOX_BACKFILL_ACTIVE_POLICY_NAME: '',
+  HISTORICAL_INBOX_BACKFILL_STATE_PROPERTY: 'historicalInboxBackfillStateV1',
+  HISTORICAL_INBOX_BACKFILL_PROTECTED_LABEL: 'Cleanup_Review/Historical/Protected',
+  HISTORICAL_INBOX_BACKFILL_LABEL_REPAIR_BATCH_SIZE: 50,
+  HISTORICAL_INBOX_BACKFILL_LABEL_REPAIR_CONFIRMATION: '',
+  // required: REPAIR_HISTORICAL_STAGING_LABELS
+  HISTORICAL_CONVERSATION_PROTECTED_SENDER_PHRASES: [
+    'recruiter', 'recruiting', 'recruitment', 'talent acquisition',
+    'reclutador', 'reclutamiento',
+  ],
+  HISTORICAL_SOCIAL_PROTECTED_SUBJECT_PHRASES: [
+    'recruiter', 'recruiting', 'recruitment', 'reclutador', 'reclutamiento',
+    'job opportunity', 'job opening', 'career opportunity', 'hiring', 'vacante',
+    'interview', 'entrevista',
+    'connect', 'connection', 'conectar', 'conexion', 'conexión',
+    'invite', 'invited', 'invitation', 'invitar', 'invitacion', 'invitación',
+    'inmail', 'message', 'mensaje',
+    'reply', 'replied', 'response', 'respond', 'responded',
+    'respuesta', 'respondio', 'respondió',
+  ],
+  HISTORICAL_INBOX_BACKFILL_POLICIES: [
+    {
+      name: 'Promotions',
+      label: 'Cleanup_Review/Historical/Promotions',
+      query: 'in:inbox category:promotions older_than:30d',
+      archive: true,
+      protectConversationSignals: true,
+    },
+    {
+      name: 'Social',
+      label: 'Cleanup_Review/Historical/Social',
+      query: 'in:inbox category:social older_than:30d',
+      // Social is label-only: personal messages, recruiters, connection
+      // requests, and conversations requiring replies are never auto-archived.
+      archive: false,
+      social: true,
+      protectConversationSignals: true,
+    },
+    {
+      name: 'Updates/Security',
+      label: 'Cleanup_Review/Historical/Updates/Security',
+      query: 'in:inbox category:updates older_than:30d {subject:"security alert" subject:seguridad subject:verification subject:verificacion subject:"codigo de seguridad" subject:"inicio de sesion" subject:"new sign in"}',
+      archive: false,
+    },
+    {
+      name: 'Updates/Finance',
+      label: 'Cleanup_Review/Historical/Updates/Finance',
+      query: `in:inbox category:updates older_than:30d ${FINANCIAL_SENDER_QUERY}`,
+      archive: false,
+    },
+    {
+      name: 'Updates/Documents',
+      label: 'Cleanup_Review/Historical/Updates/Documents',
+      query: 'in:inbox category:updates older_than:30d has:attachment',
+      archive: false,
+    },
+    {
+      name: 'Updates/Travel',
+      label: 'Cleanup_Review/Historical/Updates/Travel',
+      query: 'in:inbox category:updates older_than:30d {subject:"check-in" subject:"boarding pass" subject:"pase de abordar" subject:itinerario subject:reservacion subject:"reservation confirmation"}',
+      archive: false,
+    },
+    {
+      name: 'Updates/Uber records',
+      label: 'Cleanup_Review/Historical/Updates/Uber records',
+      query: 'in:inbox category:updates older_than:30d from:uber.com {subject:"your uber receipt" subject:"receipt from uber" subject:"your uber trip" subject:"your uber eats order"}',
+      archive: false,
+    },
+    {
+      name: 'Updates/Orders and receipts',
+      label: 'Cleanup_Review/Historical/Updates/Orders and receipts',
+      query: 'in:inbox category:updates older_than:30d {subject:factura subject:recibo subject:invoice subject:receipt subject:comprobante subject:pedido subject:"order confirmation" subject:"your order"}',
+      archive: false,
+    },
+    {
+      name: 'Updates/Action required',
+      label: 'Cleanup_Review/Historical/Updates/Action required',
+      query: 'in:inbox category:updates older_than:30d {subject:"action required" subject:"accion requerida" subject:"requiere tu atencion" subject:"complete your" subject:"confirm your" subject:expira subject:expires subject:renovacion subject:renewal subject:failed subject:fallo subject:rechazado}',
+      archive: false,
+    },
+    {
+      name: 'Updates/Digests',
+      label: 'Cleanup_Review/Historical/Updates/Digests',
+      query: 'in:inbox category:updates older_than:30d {from:medium.com from:substack.com from:e.udemymail.com from:digest.bytebytego.com from:newsletter subject:digest subject:newsletter subject:"weekly update" subject:"weekly digest"}',
+      archive: false,
+    },
+    {
+      name: 'Updates/Unclassified',
+      label: 'Cleanup_Review/Historical/Updates/Unclassified',
+      query: 'in:inbox category:updates older_than:30d',
+      archive: false,
+      fallback: true,
+    },
+  ],
   /** Label-only historical backfill for the institution/type hierarchy. */
   FINANCIAL_SUBLABEL_BACKFILL_LOOKBACK_DAYS: 3650,
   FINANCIAL_SUBLABEL_BACKFILL_BATCH_SIZE: 100,

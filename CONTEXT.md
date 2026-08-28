@@ -1,6 +1,6 @@
 # Project Context — Gmail Cleanup Scripts
 
-Last architecture update: **2026-08-24**
+Last architecture update: **2026-08-28**
 
 Read this file for the system map. Then read `docs/HANDOVER.md` for live state and `KNOWLEDGE.md` for stable invariants.
 
@@ -145,6 +145,8 @@ Read-only audits:
 - `auditFinancialSublabelBackfill`
 - `auditFinancialLabelRepair`
 - `auditInboxBacklog`
+- `auditHistoricalInboxBackfill`
+- `auditHistoricalStagingLabelRepair`
 - `auditInboxRuleRetention`
 - `auditBulkCleanup`
 - `generateCleanupReport`
@@ -153,8 +155,11 @@ Read-only audits:
 Routine/temporary automation:
 
 - `runInboxRules`
+- `backfillHistoricalInbox` / `runScheduledHistoricalInboxBackfill`
+- `repairHistoricalStagingLabels`
 - `runScheduledFinancialSublabelBackfill`
 - `installInboxAutomation` / `removeInboxAutomation`
+- `installHistoricalInboxBackfillSchedule` / `removeHistoricalInboxBackfillSchedule`
 - `installFinancialSublabelBackfillSchedule` / `removeFinancialSublabelBackfillSchedule`
 
 High-impact functions and exact safety details are listed in `docs/OPERATIONS.md`.

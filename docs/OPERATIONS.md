@@ -30,6 +30,8 @@ npm run push                  # live Apps Script deployment; approval required
 - `auditFinancialSublabelBackfill`
 - `auditFinancialLabelRepair`
 - `auditInboxBacklog`
+- `auditHistoricalInboxBackfill`
+- `auditHistoricalStagingLabelRepair`
 - `auditInboxRuleRetention`
 - `auditBulkCleanup`
 - `generateCleanupReport`
@@ -45,6 +47,13 @@ npm run push                  # live Apps Script deployment; approval required
 - `backfillFinancialSublabels` — parent/child finance labels only.
 - `runScheduledFinancialSublabelBackfill` — repair, then backfill, then self-remove trigger.
 - `stageInboxBacklog` — labels and archives; no Trash.
+- `backfillHistoricalInbox` — bounded category backfill; labels first and can
+  archive only safety-cleared Promotions when both dedicated gates are enabled.
+- `runScheduledHistoricalInboxBackfill` — ten-minute temporary worker; removes
+  only its own trigger after a complete empty, error-free cycle.
+- `repairHistoricalStagingLabels` — rehomes only safety-excluded
+  Promotions/Social review labels to the neutral historical `Protected` label;
+  read/archive state is unchanged.
 - `stageBulkCleanupCandidates` — labels and archives; no Trash.
 
 ### Destructive or high-impact
@@ -64,6 +73,9 @@ Run high-impact entry points only after the matching audit and explicit approval
 - `ENABLE_INBOX_RECORD_ARCHIVE`: currently `false`.
 - `ENABLE_RULE_RETENTION_TRASH`: currently `false`.
 - `INBOX_BACKLOG_CONFIRMATION`: empty by default.
+- Historical backfill and historical staging-repair tokens are empty by
+  default; Promotions archive remains false and the manual policy pin must be
+  named explicitly for an approved batch.
 - Finance backfill and repair tokens are populated while the temporary scheduler is active.
 - Destructive label-emptying requires both a target label and exact typed confirmation.
 
@@ -92,6 +104,61 @@ After the temporary finance scheduler completes and self-removes, consider clear
 7. Once repair returns zero changes, the same handler begins backfill.
 8. The trigger deletes itself only when backfill returns `labelled=0, errors=0`.
 9. After completion, sample Gmail and refresh ignored `docs/HANDOVER.local.md`; add only reusable, sanitized guidance to tracked docs.
+
+## Historical category-backfill runbook
+
+1. Verify Apps Script executions and triggers read-only. The existing hourly
+   `runInboxRules` trigger must remain unchanged.
+2. Run `auditHistoricalInboxBackfill()` and review the capped counts, query
+   scopes, sample subjects, and reported exclusions for Promotions, Social, and
+   every Updates subtype. Record account-specific results only in the ignored
+   local handover.
+3. Promotions is the first possible archive lane. Before enabling it, sample
+   the pending label and confirm that no protected sender/content, star,
+   importance, sent reply, or attachment was admitted.
+4. Keep Social and all Updates policies label-only. Promotions and Social route
+   every runtime safety exclusion—including recruiter, connection, invitation,
+   reply, sent-thread, attachment, star/importance, protected sender, and
+   protected content—to `Cleanup_Review/Historical/Protected`, never to either
+   category staging label. Updates are
+   separated into Security, Finance, Documents, Travel, Uber/orders/receipts,
+   action-required, Digests, and Unclassified for human review.
+5. For a reviewed live run, set only
+   `HISTORICAL_INBOX_BACKFILL_CONFIRMATION` to
+   `APPLY_HISTORICAL_INBOX_BACKFILL`. Keep
+   `HISTORICAL_INBOX_BACKFILL_ARCHIVE_PROMOTIONS` false for label-only staging.
+   Set it true only after a separate Promotions audit approval.
+6. `backfillHistoricalInbox()` processes one policy at a time in batches of 25
+   under the shared lock. For a manual batch, set
+   `HISTORICAL_INBOX_BACKFILL_ACTIVE_POLICY_NAME` to the explicitly reviewed
+   policy; leave it blank only for the approved all-policy scheduler. The
+   review label is the durable cursor, so retries are idempotent.
+   `resetHistoricalInboxBackfillState()` only resets the cursor; it does not
+   remove labels or change Gmail. DRY_RUN neither advances nor resets the
+   cursor and never installs or removes the temporary trigger.
+7. If a temporary schedule is approved, install
+   `installHistoricalInboxBackfillSchedule()`. It runs every ten minutes and
+   removes only `runScheduledHistoricalInboxBackfill` after all policies are
+   empty in a full scan with no errors. Remove it immediately with
+   `removeHistoricalInboxBackfillSchedule()` to stop the process.
+8. Before another Promotions/Social batch, run
+   `auditHistoricalStagingLabelRepair()`. It reads exactly
+   `label:"Cleanup_Review/Historical/Promotions" -in:spam -in:trash` and
+   `label:"Cleanup_Review/Historical/Social" -in:spam -in:trash`, inspects at
+   most the configured repair batch per label, and applies the same runtime
+   safety checks without changing Gmail.
+9. A separately approved correction sets
+   `HISTORICAL_INBOX_BACKFILL_LABEL_REPAIR_CONFIRMATION` to
+   `REPAIR_HISTORICAL_STAGING_LABELS` and runs
+   `repairHistoricalStagingLabels()`. Matching threads first receive
+   `Cleanup_Review/Historical/Protected`, then lose only the incorrect category
+   review label. The operation does not mark read, archive, move to Inbox, or
+   use Trash. Re-running is idempotent; reversing it manually means restoring
+   the original review label before removing `Protected`.
+10. To reverse any other reviewed staged batch, remove the corresponding
+   `Cleanup_Review/Historical/...` label manually. If Promotions was ever
+   archived under separate approval, move it back to Inbox. Nothing in this
+   workflow uses Trash.
 
 ## Deployment checklist
 

@@ -267,6 +267,21 @@ For historical Inbox cleanup, run `auditInboxBacklog()`. To apply one reversible
 batch, set `INBOX_BACKLOG_CONFIRMATION` to `ARCHIVE_INBOX_BACKLOG` and run
 `stageInboxBacklog()`. Clear the token again afterward.
 
+For category mail older than the normal inbox-rule window, use the separate
+`auditHistoricalInboxBackfill()` first. It reports Promotions, Social, and
+specific Updates groups with sample exclusions. `backfillHistoricalInbox()` is
+confirmation-gated, uses small resumable review-label batches, and is label-only
+by default. Social and Updates never auto-archive in this lane. Promotions can
+be archived only after its audit is reviewed and its separate archive gate is
+deliberately enabled. Promotions/Social candidates with attachments, protected
+senders/content, starred/important/sent-thread state, or recruiter, connection,
+invitation, or response signals are routed to
+`Cleanup_Review/Historical/Protected`, never to category staging. A separate
+read-only repair audit can identify older staged labels that need the same
+label-only rehome. The optional ten-minute temporary worker removes only its
+own trigger after a full empty, error-free cycle; see
+[docs/OPERATIONS.md](docs/OPERATIONS.md) for stopping and reversal.
+
 Default incoming behavior:
 
 - Security and genuinely action-required finance/Updates mail stay in Inbox.
