@@ -5,6 +5,20 @@
 
 ---
 
+## 2026-08-28 — Diagnose rolling trigger errors before changing automation
+
+- The Apps Script trigger error-rate badge covers rolling history and can remain
+  non-zero after the incident has stopped.
+- Inspect a representative failed execution rather than inferring the cause from
+  the percentage. In this case, the hourly classifier and the former temporary
+  finance scheduler failed in the same window because the daily Gmail service
+  quota had been exhausted.
+- Correlate failures with temporary job load, then observe a later scheduled run
+  after that job is gone. A healthy post-deploy run with no reported errors is
+  stronger evidence than the stale dashboard percentage.
+- Preserve the stable hourly trigger when the failure is historical and its
+  current executions are healthy.
+
 ## 2026-08-28 — Safety exclusions must not share category staging
 
 - Blocking archive is not enough when the review label itself implies that a

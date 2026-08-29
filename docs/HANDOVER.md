@@ -17,6 +17,9 @@ For work on a configured account, use an ignored `docs/HANDOVER.local.md`. If it
   never change read/archive state.
 - `runScheduledFinancialSublabelBackfill` is a temporary repair/backfill handler that may or may not still be installed on a given account.
 - Both mailbox jobs share a script lock; a locked skip is expected and safe.
+- A non-zero rolling trigger error-rate badge can outlive a resolved Gmail quota
+  incident. Diagnose the underlying failed execution and nearby temporary jobs;
+  do not change a healthy hourly trigger based on the badge alone.
 - The temporary handler repairs labels first, backfills missing bank children second, and removes only its own trigger after an empty, error-free cycle.
 - Finance repair/backfill is label-only and must preserve read/archive state.
 - Delayed receipt/order archive and automatic retention Trash remain separate,

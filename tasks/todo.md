@@ -25,8 +25,11 @@ Current account-specific progress belongs in ignored `docs/HANDOVER.local.md`.
 - [x] Review accumulated receipt/order samples before considering `ENABLE_DOCUMENT_RECORD_ARCHIVE`.
 - [x] Run `auditInboxRuleRetention` and review every affected low-value label before considering `ENABLE_RULE_RETENTION_TRASH`.
 - [x] Re-audit hourly `runInboxRules` duration after finance maintenance completes; normal runs should stay below the lock-contention window.
-- [ ] Diagnose the remaining seven-day `runInboxRules` error-rate history
-  read-only before changing the stable hourly trigger.
+- [x] Diagnose the remaining seven-day `runInboxRules` error-rate history
+  read-only. The failed hourly executions were caused by daily Gmail quota
+  exhaustion while the former temporary finance scheduler was active;
+  subsequent hourly and post-deploy runs completed normally, so the stable
+  trigger remains unchanged.
 - [ ] Add any newly observed bank-specific vocabulary only with real examples and regression tests.
 
 ## Low priority / deferred
