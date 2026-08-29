@@ -1,6 +1,6 @@
 # Project Context — Gmail Cleanup Scripts
 
-Last architecture update: **2026-08-27**
+Last architecture update: **2026-08-28**
 
 Read this file for the system map. Then read `docs/HANDOVER.md` for live state and `KNOWLEDGE.md` for stable invariants.
 
@@ -134,7 +134,7 @@ BBVA is intentionally not configured.
 | Config | Current intent |
 |---|---|
 | `DRY_RUN` | Global write guard for supported workflows; normally false after reviewed samples |
-| `ENABLE_DOCUMENT_RECORD_ARCHIVE` | Enabled after reviewed receipt/order sampling; archives eligible records after 14 days |
+| `ENABLE_DOCUMENT_RECORD_ARCHIVE` | Keep false unless a reviewed receipt/order archive rollout is intentionally active |
 | `ENABLE_RULE_RETENTION_TRASH` | Keep false until retention audit is explicitly approved |
 | `INBOX_BACKLOG_CONFIRMATION` | Empty unless applying one reviewed reversible backlog batch |
 | `FINANCIAL_SUBLABEL_BACKFILL_CONFIRMATION` | Populated only while the temporary finance workflow is intentionally active |
@@ -149,6 +149,8 @@ Read-only audits:
 - `auditFinancialSublabelBackfill`
 - `auditFinancialLabelRepair`
 - `auditInboxBacklog`
+- `auditHistoricalInboxBackfill`
+- `auditHistoricalStagingLabelRepair`
 - `auditInboxRuleRetention`
 - `auditBulkCleanup`
 - `generateCleanupReport`
@@ -157,8 +159,11 @@ Read-only audits:
 Routine/temporary automation:
 
 - `runInboxRules`
+- `backfillHistoricalInbox` / `runScheduledHistoricalInboxBackfill`
+- `repairHistoricalStagingLabels`
 - `runScheduledFinancialSublabelBackfill`
 - `installInboxAutomation` / `removeInboxAutomation`
+- `installHistoricalInboxBackfillSchedule` / `removeHistoricalInboxBackfillSchedule`
 - `installFinancialSublabelBackfillSchedule` / `removeFinancialSublabelBackfillSchedule`
 
 High-impact functions and exact safety details are listed in `docs/OPERATIONS.md`.

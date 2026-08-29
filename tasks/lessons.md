@@ -5,6 +5,35 @@
 
 ---
 
+## 2026-08-28 — Diagnose rolling trigger errors before changing automation
+
+- The Apps Script trigger error-rate badge covers rolling history and can remain
+  non-zero after the incident has stopped.
+- Inspect a representative failed execution rather than inferring the cause from
+  the percentage. In this case, the hourly classifier and the former temporary
+  finance scheduler failed in the same window because the daily Gmail service
+  quota had been exhausted.
+- Correlate failures with temporary job load, then observe a later scheduled run
+  after that job is gone. A healthy post-deploy run with no reported errors is
+  stronger evidence than the stale dashboard percentage.
+- Preserve the stable hourly trigger when the failure is historical and its
+  current executions are healthy.
+
+## 2026-08-28 — Safety exclusions must not share category staging
+
+- Blocking archive is not enough when the review label itself implies that a
+  message belongs in Promotions or Social. Recruiter, connection, invitation,
+  response, sent-thread, attachment, starred/important, protected-sender, and
+  protected-content exclusions should go to a neutral `Protected` label.
+- Evaluate the routing decision from the final exclusion reason, not only a
+  conversation-specific reason; otherwise a starred recruiter message can be
+  mis-staged because the earlier starred/important check wins.
+- Repair previously staged mail in a separate, token-gated label-only lane:
+  add the neutral protected label first, remove only the wrong review label,
+  and preserve Inbox/read/archive state. Audit the same predicate first.
+- DRY_RUN must not advance a persisted cursor. A dry-run that changes state can
+  silently alter which policy a later approved live batch selects.
+
 ## 2026-08-27 — Enable reviewed receipt/order archive rollout
 
 ### Context
@@ -341,6 +370,28 @@ When moving files between folders, Google Drive's `Folder.addFile()` combined wi
 - `GmailThread.getMessages()` across a 100-thread batch can consume roughly three minutes. For subject-based historical classification, use Gmail search subject predicates and `GmailLabel.addToThreads()` so reads and writes remain bulk operations.
 - Gmail historical search can distinguish accented Spanish terms even when the incoming pure-text classifier normalizes them. Expand query phrases with accented variants (`autorización`, `promoción`, `código`) and chunk long subject OR groups so the live rule and historical backfill classify the same mail.
 - When a temporary trigger shares a script lock with a long hourly job, schedule it beyond the observed batch duration. Finance repair now runs every ten minutes, processes obsolete labels before expensive child-label inspection, and self-removes only after repair and backfill are both empty.
+
+## 2026-08-27 — Historical category backfill needs its own safety lane
+
+- The hourly Gmail window is not a reliable historical drain. A historical
+  worker must be independent, small, locked, and resumable without changing
+  `runInboxRules` or relying on Gmail search offsets as a cursor.
+- A per-policy review label is a durable, reversible cursor: retries skip work
+  already staged and a state property only determines which policy runs next.
+- Gmail Social must never be treated as generically disposable. Personal,
+  recruiter, connection, reply, sent-thread, attachment, starred, important,
+  protected-sender, and protected-content signals remain exclusions.
+- Updates is mixed mail. Audit and label its Security, Finance, Documents,
+  Travel, orders/receipts, action, digest, and unclassified groups separately;
+  do not introduce a catch-all archive rule.
+- Dynamic Uber receipt/order subjects should be matched through an Uber sender
+  rule, not by adding broad words such as `trip` to the generic order query.
+- A live Social sample using "waiting for your response" showed that `respond`
+  does not cover the noun `response`; protect both reply and response variants
+  explicitly and add the observed wording as a regression test before staging.
+- After an approved live backfill batch, redeploy the empty confirmation token
+  immediately. A persisted cursor may still point to more work, so relying on
+  batch completion alone is not an adequate stop control.
 
 ## 2026-08-27 — Split financial products with query-scoped parent rehomes
 

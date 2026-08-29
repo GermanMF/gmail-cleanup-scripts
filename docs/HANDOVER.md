@@ -7,12 +7,23 @@ For work on a configured account, use an ignored `docs/HANDOVER.local.md`. If it
 ## Stable operating state
 
 - `runInboxRules` is the normal inbox classifier entry point.
+- `runScheduledHistoricalInboxBackfill` is an independent, optional temporary
+  worker for mail outside the normal lookback. It must not change the hourly
+  trigger. Its labels are reversible audit records; Social and Updates are
+  label-only, while Promotions requires a separate reviewed archive gate.
+- Promotions/Social safety exclusions belong under
+  `Cleanup_Review/Historical/Protected`, not their category staging labels.
+  Audit and repair of older staged labels are separate from the backfill and
+  never change read/archive state.
 - `runScheduledFinancialSublabelBackfill` is a temporary repair/backfill handler that may or may not still be installed on a given account.
 - Both mailbox jobs share a script lock; a locked skip is expected and safe.
+- A non-zero rolling trigger error-rate badge can outlive a resolved Gmail quota
+  incident. Diagnose the underlying failed execution and nearby temporary jobs;
+  do not change a healthy hourly trigger based on the badge alone.
 - The temporary handler repairs labels first, backfills missing bank children second, and removes only its own trigger after an empty, error-free cycle.
 - Finance repair/backfill is label-only and must preserve read/archive state.
-- Delayed receipt/order archive is enabled after a reviewed bounded rollout;
-  automatic retention Trash remains a separate disabled rollout gate.
+- Delayed receipt/order archive and automatic retention Trash remain separate,
+  disabled rollout gates even after a bounded review has been completed.
 
 ## What the next agent should do first
 

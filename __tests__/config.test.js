@@ -146,9 +146,9 @@ describe('financial institution configuration', () => {
 });
 
 describe('mailbox safety configuration', () => {
-  test('keeps destructive retention disabled while reviewed document archive is enabled', () => {
+  test('keeps destructive retention and document archive disabled by default', () => {
     expect(CONFIG.ENABLE_RULE_RETENTION_TRASH).toBe(false);
-    expect(CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE).toBe(true);
+    expect(CONFIG.ENABLE_DOCUMENT_RECORD_ARCHIVE).toBe(false);
   });
 
   test('requires an explicit token before reversible backlog staging', () => {
