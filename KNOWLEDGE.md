@@ -59,6 +59,9 @@ This file records stable decisions and non-obvious invariants. Use `docs/HANDOVE
 - `GmailThread.getMessages()` is expensive at mailbox scale. Prefer Gmail indexed queries and bulk label methods.
 - `GmailApp.search` pages at 500; direct bounded searches are samples unless explicitly paginated.
 - Trigger frequency must remain comfortably above normal batch duration. Lock skips are safer than overlapping work.
+- The Apps Script trigger error-rate badge is a rolling historical signal. Read
+  the failed execution log and correlate it with temporary schedulers and quota
+  use before changing a currently healthy stable trigger.
 - Recursive Drive scans require resumable state for large archives.
 
 ## Tooling and deployment

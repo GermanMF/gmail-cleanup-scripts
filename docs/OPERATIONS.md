@@ -216,6 +216,10 @@ labels on threads matched by the reviewed institution query.
 - Wrong child label: correct the classifier and use a targeted label-only repair. Do not remove the institution parent.
 - Long execution: retain the 4.5-minute loop guards and reduce per-run reads/batch size before increasing trigger frequency.
 - Repeated lock skips: compare hourly execution duration with the temporary interval; do not remove the lock.
+- Non-zero trigger error rate: treat the dashboard percentage as rolling
+  history. Inspect a representative failed execution and correlate it with
+  temporary scheduler load or Gmail quota exhaustion before changing the
+  stable trigger; then verify a later non-overlapping scheduled run.
 - Query misses accented Spanish: add accent expansion and keep long OR groups chunked.
 - Dirty local versus remote source: inspect history and diffs. Avoid `clasp pull` until local work is safely committed or copied.
 - Unexpected Trash behavior: disable the responsible feature flag/trigger first, then audit. Do not empty Gmail Trash automatically.
